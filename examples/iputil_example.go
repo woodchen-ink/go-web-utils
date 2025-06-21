@@ -4,20 +4,20 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/woodchen-ink/go-web-utils/ip"
+	"github.com/woodchen-ink/go-web-utils/iputil"
 )
 
 func main() {
 	// 创建一个简单的 HTTP 服务器来演示 IP 获取功能
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// 获取客户端真实IP
-		clientIP := ip.GetClientIP(r)
+		clientIP := iputil.GetClientIP(r)
 
 		// 验证IP是否有效
-		isValid := ip.IsValidIP(clientIP)
+		isValid := iputil.IsValidIP(clientIP)
 
 		// 判断是否为私有IP
-		isPrivate := ip.IsPrivateIP(clientIP)
+		isPrivate := iputil.IsPrivateIP(clientIP)
 
 		// 输出结果
 		fmt.Fprintf(w, "客户端IP信息:\n")

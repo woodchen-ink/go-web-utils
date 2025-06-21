@@ -18,16 +18,16 @@ go get github.com/woodchen-ink/go-web-utils
 ### IP 工具
 
 ```go
-import "github.com/woodchen-ink/go-web-utils/ip"
+import "github.com/woodchen-ink/go-web-utils/iputil"
 
 // 获取客户端真实IP
-clientIP := ip.GetClientIP(r)
+clientIP := iputil.GetClientIP(r)
 
 // 验证IP是否有效
-isValid := ip.IsValidIP("192.168.1.1")
+isValid := iputil.IsValidIP("192.168.1.1")
 
 // 判断是否为私有IP
-isPrivate := ip.IsPrivateIP("192.168.1.1")
+isPrivate := iputil.IsPrivateIP("192.168.1.1")
 ```
 
 ## 贡献
