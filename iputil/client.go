@@ -1,3 +1,30 @@
+/*
+Package iputil 提供了 IP 地址相关的实用工具函数。
+
+这个包主要用于 Web 应用中获取和处理客户端 IP 地址，支持各种代理和 CDN 场景。
+
+主要功能:
+  - GetClientIP: 获取客户端真实 IP 地址
+  - IsValidIP: 验证 IP 地址格式是否正确
+  - IsPrivateIP: 判断是否为私有网络 IP
+
+GetClientIP 函数按以下优先级获取客户端 IP:
+ 1. CF-Connecting-IP (Cloudflare)
+ 2. X-Real-IP (Nginx 等代理)
+ 3. X-Forwarded-For (标准代理链)
+ 4. RemoteAddr (直连)
+
+使用示例:
+
+	import "github.com/woodchen-ink/go-web-utils/iputil"
+
+	func handler(w http.ResponseWriter, r *http.Request) {
+		clientIP := iputil.GetClientIP(r)
+		if iputil.IsValidIP(clientIP) && !iputil.IsPrivateIP(clientIP) {
+			// 处理来自公网的有效IP
+		}
+	}
+*/
 package iputil
 
 import (
