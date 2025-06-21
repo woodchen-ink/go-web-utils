@@ -1,5 +1,7 @@
 # go-web-utils
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/woodchen-ink/go-web-utils.svg)](https://pkg.go.dev/github.com/woodchen-ink/go-web-utils)
+
 一个用于 Go Web 项目的实用工具库，提供常用的功能模块。
 
 ## 功能特性
