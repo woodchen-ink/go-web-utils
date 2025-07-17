@@ -1,8 +1,23 @@
-# go-web-utils
+<div align="center">
+
+# 🔧 go-web-utils
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/woodchen-ink/go-web-utils.svg)](https://pkg.go.dev/github.com/woodchen-ink/go-web-utils)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/woodchen-ink/go-web-utils)](https://goreportcard.com/report/github.com/woodchen-ink/go-web-utils)
 
-A lightweight, high-performance Go web utility library focused on solving common needs in web development.
+**A lightweight, high-performance Go web utility library focused on solving common needs in web development.**
+
+</div>
+
+---
+
+## 🌍 语言 / Language
+
+| [中文](README.md) | [English](README_EN.md) |
+
+
+---
 
 ## 📖 Documentation
 
