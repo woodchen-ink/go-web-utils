@@ -1,0 +1,224 @@
+---
+title: GetClientIP
+description: 智能获取客户端真实 IP 地址
+---
+
+# GetClientIP
+
+智能获取客户端真实 IP 地址，自动处理各种代理和 CDN 场景。
+
+## 函数签名
+
+```go
+func GetClientIP(r *http.Request) string
+```
+
+## 参数
+
+- `r *http.Request` - HTTP 请求对象
+
+## 返回值
+
+- `string` - 客户端 IP 地址字符串
+
+## 获取逻辑
+
+`GetClientIP` 函数按以下优先级获取客户端 IP：
+
+| 优先级 | HTTP 头 | 使用场景 |
+|--------|---------|----------|
+| 1 | `CF-Connecting-IP` | Cloudflare CDN |
+| 2 | `X-Real-IP` | Nginx 反向代理 |
+| 3 | `X-Forwarded-For` | 标准代理链 |
+| 4 | `RemoteAddr` | 直连访问 |
+
+
+## 基本用法
+
+```go
+package main
+
+import (
+    "fmt"
+    "net/http"
+    "github.com/woodchen-ink/go-web-utils/iputil"
+)
+
+func handler(w http.ResponseWriter, r *http.Request) {
+    clientIP := iputil.GetClientIP(r)
+    fmt.Fprintf(w, "您的 IP 地址: %s", clientIP)
+}
+
+func main() {
+    http.HandleFunc("/", handler)
+    http.ListenAndServe(":8080", nil)
+}
+```
+
+## 实际应用场景
+
+### 1. 访问日志记录
+
+```go
+func logMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        clientIP := iputil.GetClientIP(r)
+        start := time.Now()
+        
+        next.ServeHTTP(w, r)
+        
+        duration := time.Since(start)
+        log.Printf("[%s] %s %s - %v", 
+            clientIP, r.Method, r.URL.Path, duration)
+    })
+}
+```
+
+### 2. API 限流
+
+```go
+// 简单的内存限流器
+var rateLimiter = make(map[string]int)
+var mu sync.Mutex
+
+func rateLimitMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        clientIP := iputil.GetClientIP(r)
+        
+        mu.Lock()
+        count := rateLimiter[clientIP]
+        if count >= 100 { // 每分钟最多 100 次请求
+            mu.Unlock()
+            http.Error(w, "请求过于频繁", http.StatusTooManyRequests)
+            return
+        }
+        rateLimiter[clientIP] = count + 1
+        mu.Unlock()
+        
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+### 3. IP 白名单控制
+
+```go
+var allowedIPs = map[string]bool{
+    "192.168.1.100": true,
+    "10.0.0.50":     true,
+    "203.0.113.10":  true,
+}
+
+func ipWhitelistMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        clientIP := iputil.GetClientIP(r)
+        
+        if !allowedIPs[clientIP] {
+            http.Error(w, "访问被拒绝", http.StatusForbidden)
+            log.Printf("拒绝访问来自 %s 的请求", clientIP)
+            return
+        }
+        
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+### 4. 内外网区分处理
+
+```go
+func serviceHandler(w http.ResponseWriter, r *http.Request) {
+    clientIP := iputil.GetClientIP(r)
+    
+    // 检查是否为私有网络 IP
+    if iputil.IsPrivateIP(clientIP) {
+        // 内网用户，提供管理员功能
+        w.Header().Set("X-Access-Level", "admin")
+        fmt.Fprintf(w, "内网管理员访问，IP: %s", clientIP)
+    } else {
+        // 外网用户，提供普通功能
+        w.Header().Set("X-Access-Level", "user")
+        fmt.Fprintf(w, "外网用户访问，IP: %s", clientIP)
+    }
+}
+```
+
+## 不同代理场景示例
+
+### Cloudflare 代理
+
+```
+客户端 IP: 203.0.113.45
+请求头: CF-Connecting-IP: 203.0.113.45
+结果: GetClientIP() 返回 "203.0.113.45"
+```
+
+### Nginx 反向代理
+
+```
+客户端 IP: 203.0.113.45
+请求头: X-Real-IP: 203.0.113.45
+结果: GetClientIP() 返回 "203.0.113.45"
+```
+
+### 多级代理链
+
+```
+客户端 IP: 203.0.113.45
+请求头: X-Forwarded-For: 203.0.113.45, 192.168.1.1, 10.0.0.1
+结果: GetClientIP() 返回 "203.0.113.45" (第一个 IP)
+```
+
+### 直连访问
+
+```
+RemoteAddr: 203.0.113.45:54321
+结果: GetClientIP() 返回 "203.0.113.45" (自动去除端口)
+```
+
+## 安全注意事项
+
+### 1. 头部伪造风险
+
+HTTP 头部可能被客户端伪造，在安全敏感场景中需要注意：
+
+```go
+func secureGetClientIP(r *http.Request) string {
+    ip := iputil.GetClientIP(r)
+    
+    // 验证 IP 格式
+    if !iputil.IsValidIP(ip) {
+        // 回退到直连 IP
+        host, _, _ := net.SplitHostPort(r.RemoteAddr)
+        return host
+    }
+    
+    return ip
+}
+```
+
+### 2. 信任代理环境
+
+只在可信的代理环境中依赖代理头部：
+
+```go
+func conditionalGetClientIP(r *http.Request, trustProxy bool) string {
+    if !trustProxy {
+        // 不信任代理，直接使用 RemoteAddr
+        host, _, _ := net.SplitHostPort(r.RemoteAddr)
+        return host
+    }
+    
+    return iputil.GetClientIP(r)
+}
+```
+
+## 性能说明
+
+- **零内存分配**: 除了返回的字符串，函数不产生额外的内存分配
+- **快速查找**: 头部查找基于 Go 标准库的高效实现
+- **短路求值**: 一旦找到有效 IP 立即返回，避免不必要的处理
+
+## 相关函数
+
+- [IsValidIP](./is-valid-ip) - 验证获取的 IP 地址格式是否正确 

@@ -46,3 +46,5 @@ tmp/
 temp/ 
 
 .cursor
+
+docs/node_modules/
