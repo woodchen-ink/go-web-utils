@@ -1,0 +1,113 @@
+---
+title: User-Agent 工具包 (uautil)
+description: 专为 Web 应用设计的 User-Agent 检测和机器人过滤工具包
+---
+
+# User-Agent 工具包 (uautil)
+
+`uautil` 是专为 Web 应用设计的 User-Agent 检测和机器人过滤工具包，帮助你轻松拦截恶意爬虫，同时保留合法搜索引擎访问。
+
+## 🎯 设计目标
+
+- **简单易用**: 函数接口简洁明了，开箱即用
+- **智能识别**: 内置常见机器人特征，智能识别恶意爬虫
+- **灵活配置**: 支持自定义机器人特征和合法爬虫白名单
+- **零依赖**: 基于 Go 标准库实现，无外部依赖
+- **性能优先**: 高效的实现，适用于高并发场景
+
+## 📦 安装
+
+```bash
+go get github.com/woodchen-ink/go-web-utils/uautil
+```
+
+## 🚀 快速开始
+
+### 基本用法
+
+```go
+import "github.com/woodchen-ink/go-web-utils/uautil"
+
+func handler(w http.ResponseWriter, r *http.Request) {
+    // 检测是否为机器人（拦截所有机器人）
+    if uautil.IsBot(r, false) {
+        http.Error(w, "Bot access denied", http.StatusForbidden)
+        return
+    }
+
+    // 正常处理请求
+    w.Write([]byte("Welcome!"))
+}
+```
+
+### SEO 友好模式
+
+```go
+// 允许合法搜索引擎爬虫（Google、Bing 等），但拦截恶意爬虫
+if uautil.IsBot(r, true) {
+    http.Error(w, "Malicious bot detected", http.StatusForbidden)
+    return
+}
+```
+
+### 使用中间件
+
+```go
+import "github.com/woodchen-ink/go-web-utils/uautil"
+
+func main() {
+    // 创建你的处理器
+    handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("Welcome!"))
+    })
+
+    // 应用机器人拦截中间件
+    // allowLegitimate=true: 允许合法搜索引擎
+    middleware := uautil.BlockBotMiddleware(true, "Access denied")
+    protectedHandler := middleware(handler)
+
+    http.ListenAndServe(":8080", protectedHandler)
+}
+```
+
+## 📚 功能列表
+
+- [IsBot](/docs/uautil/is-bot) - 检测请求是否来自机器人
+- [IsBotUserAgent](/docs/uautil/is-bot-user-agent) - 直接检测 User-Agent 字符串
+- [BlockBotMiddleware](/docs/uautil/block-bot-middleware) - HTTP 中间件拦截机器人
+- [AddCustomBotPattern](/docs/uautil/custom-patterns) - 添加自定义机器人特征
+
+## 🤖 内置机器人特征
+
+### 恶意机器人/工具
+- `python-requests`, `python-urllib`
+- `curl`, `wget`
+- `scrapy`, `selenium`, `phantomjs`
+- `nmap`, `sqlmap`, `nikto` 等扫描器
+- 其他常见爬虫工具
+
+### 合法搜索引擎爬虫
+- Google (`googlebot`)
+- Bing (`bingbot`)
+- Baidu (`baiduspider`)
+- Yahoo (`slurp`)
+- DuckDuckGo (`duckduckbot`)
+- 社交媒体爬虫（Facebook, Twitter, LinkedIn 等）
+
+## 🧪 测试
+
+```bash
+# 运行测试
+go test github.com/woodchen-ink/go-web-utils/uautil
+
+# 查看覆盖率
+go test github.com/woodchen-ink/go-web-utils/uautil -cover
+```
+
+## 💡 使用场景
+
+1. **保护 API**: 防止恶意爬虫消耗服务器资源
+2. **防止内容盗取**: 拦截自动化爬虫工具
+3. **SEO 优化**: 允许搜索引擎爬虫，拦截恶意机器人
+4. **流量控制**: 减少机器人产生的无效流量
+5. **安全防护**: 拦截扫描器和漏洞探测工具

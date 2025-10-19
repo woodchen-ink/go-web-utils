@@ -1,0 +1,10 @@
+{
+  "title": "uautil",
+  "pages": [
+    "index",
+    "is-bot",
+    "is-bot-user-agent",
+    "block-bot-middleware",
+    "custom-patterns"
+  ]
+}

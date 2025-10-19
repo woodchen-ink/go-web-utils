@@ -1,0 +1,242 @@
+---
+title: BlockBotMiddleware
+description: HTTP 中间件自动拦截机器人请求
+---
+
+# BlockBotMiddleware
+
+创建一个 HTTP 中间件来自动拦截机器人请求。
+
+## 函数签名
+
+```go
+func BlockBotMiddleware(allowLegitimate bool, customMessage ...string) func(http.Handler) http.Handler
+```
+
+## 参数
+
+- `allowLegitimate` (bool): 是否允许合法的搜索引擎爬虫
+  - `true`: 允许合法搜索引擎，仅拦截恶意机器人
+  - `false`: 拦截所有机器人
+- `customMessage` (...string): 可选的自定义拒绝消息
+  - 默认消息: "Bot access denied"
+  - 可以传入自定义消息作为第一个可选参数
+
+## 返回值
+
+- `func(http.Handler) http.Handler`: 中间件函数
+
+## 使用示例
+
+### 基本用法
+
+```go
+package main
+
+import (
+    "net/http"
+    "github.com/woodchen-ink/go-web-utils/uautil"
+)
+
+func main() {
+    // 创建处理器
+    handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("欢迎访问！"))
+    })
+
+    // 应用中间件（拦截所有机器人）
+    middleware := uautil.BlockBotMiddleware(false)
+    protectedHandler := middleware(handler)
+
+    http.ListenAndServe(":8080", protectedHandler)
+}
+```
+
+### SEO 友好模式
+
+```go
+func main() {
+    handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("欢迎访问！"))
+    })
+
+    // 允许搜索引擎，拦截恶意机器人
+    middleware := uautil.BlockBotMiddleware(true)
+    protectedHandler := middleware(handler)
+
+    http.ListenAndServe(":8080", protectedHandler)
+}
+```
+
+### 自定义拒绝消息
+
+```go
+func main() {
+    handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("Success"))
+    })
+
+    // 使用自定义拒绝消息
+    middleware := uautil.BlockBotMiddleware(
+        false,
+        "检测到机器人访问，访问被拒绝。如有疑问请联系管理员。",
+    )
+    protectedHandler := middleware(handler)
+
+    http.ListenAndServe(":8080", protectedHandler)
+}
+```
+
+### 多个路由不同策略
+
+```go
+func main() {
+    mux := http.NewServeMux()
+
+    // 公开路由 - 允许搜索引擎
+    publicHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("公开内容"))
+    })
+    publicMiddleware := uautil.BlockBotMiddleware(true)
+    mux.Handle("/public/", publicMiddleware(publicHandler))
+
+    // API 路由 - 拦截所有机器人
+    apiHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte(`{"status":"ok"}`))
+    })
+    apiMiddleware := uautil.BlockBotMiddleware(false, "API 不允许机器人访问")
+    mux.Handle("/api/", apiMiddleware(apiHandler))
+
+    // 完全公开路由 - 不使用中间件
+    mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("OK"))
+    })
+
+    http.ListenAndServe(":8080", mux)
+}
+```
+
+### 与其他中间件组合
+
+```go
+// 日志中间件
+func loggingMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        log.Printf("%s %s %s", r.Method, r.RequestURI, r.UserAgent())
+        next.ServeHTTP(w, r)
+    })
+}
+
+// 认证中间件
+func authMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        token := r.Header.Get("Authorization")
+        if token == "" {
+            http.Error(w, "Unauthorized", http.StatusUnauthorized)
+            return
+        }
+        next.ServeHTTP(w, r)
+    })
+}
+
+func main() {
+    handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("Success"))
+    })
+
+    // 组合多个中间件
+    // 执行顺序: logging -> bot blocking -> auth -> handler
+    botMiddleware := uautil.BlockBotMiddleware(true)
+
+    finalHandler := loggingMiddleware(
+        botMiddleware(
+            authMiddleware(handler),
+        ),
+    )
+
+    http.ListenAndServe(":8080", finalHandler)
+}
+```
+
+### 使用第三方路由器（如 gorilla/mux）
+
+```go
+import (
+    "github.com/gorilla/mux"
+    "github.com/woodchen-ink/go-web-utils/uautil"
+)
+
+func main() {
+    r := mux.NewRouter()
+
+    // 为所有路由应用机器人拦截
+    botMiddleware := uautil.BlockBotMiddleware(true)
+    r.Use(func(next http.Handler) http.Handler {
+        return botMiddleware(next)
+    })
+
+    r.HandleFunc("/", homeHandler)
+    r.HandleFunc("/api/data", apiHandler)
+
+    http.ListenAndServe(":8080", r)
+}
+```
+
+### 记录被拦截的机器人
+
+```go
+func customBotBlockMiddleware(allowLegitimate bool) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            if uautil.IsBot(r, allowLegitimate) {
+                // 记录被拦截的机器人
+                log.Printf("Blocked bot - UA: %s, IP: %s, Path: %s",
+                    r.UserAgent(),
+                    r.RemoteAddr,
+                    r.URL.Path,
+                )
+
+                http.Error(w, "Bot access denied", http.StatusForbidden)
+                return
+            }
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+
+func main() {
+    handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("Success"))
+    })
+
+    middleware := customBotBlockMiddleware(true)
+    http.ListenAndServe(":8080", middleware(handler))
+}
+```
+
+## 响应详情
+
+当检测到机器人时，中间件会：
+- 返回 HTTP 状态码: `403 Forbidden`
+- 返回自定义消息（如果提供）或默认消息
+- 不执行后续的处理器
+
+## 最佳实践
+
+1. **SEO 考虑**: 对于公开网站，建议使用 `allowLegitimate=true` 允许搜索引擎爬虫
+2. **API 保护**: 对于 API 端点，可以使用 `allowLegitimate=false` 完全拦截机器人
+3. **健康检查**: 健康检查端点通常不需要机器人拦截
+4. **中间件顺序**: 建议将机器人拦截放在日志记录之后、业务逻辑之前
+5. **监控**: 记录被拦截的机器人访问，用于分析和优化策略
+
+## 性能影响
+
+- 极小的性能开销（字符串匹配）
+- 适用于高并发场景
+- 在请求处理早期拦截，节省后续处理资源
+
+## 另请参阅
+
+- [IsBot](/docs/uautil/is-bot) - 检测请求是否来自机器人
+- [IsBotUserAgent](/docs/uautil/is-bot-user-agent) - 直接检测 User-Agent 字符串
+- [AddCustomBotPattern](/docs/uautil/custom-patterns) - 添加自定义机器人特征

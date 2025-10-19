@@ -1,0 +1,337 @@
+---
+title: 自定义机器人特征
+description: 添加和管理自定义机器人特征
+---
+
+# 自定义机器人特征
+
+除了内置的机器人特征，你还可以添加自定义的机器人特征来满足特定需求。
+
+## AddCustomBotPattern
+
+添加自定义的机器人特征。
+
+### 函数签名
+
+```go
+func AddCustomBotPattern(pattern string) func()
+```
+
+### 参数
+
+- `pattern` (string): 要添加的机器人特征（不区分大小写）
+
+### 返回值
+
+- `func()`: 返回一个函数，调用该函数可以移除添加的特征
+
+### 使用示例
+
+#### 基本用法
+
+```go
+package main
+
+import (
+    "net/http"
+    "github.com/woodchen-ink/go-web-utils/uautil"
+)
+
+func main() {
+    // 添加自定义机器人特征
+    uautil.AddCustomBotPattern("mycompany-crawler")
+
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        // 现在 "MyCompany-Crawler/1.0" 也会被识别为机器人
+        if uautil.IsBot(r, false) {
+            http.Error(w, "Bot detected", http.StatusForbidden)
+            return
+        }
+        w.Write([]byte("Welcome"))
+    })
+
+    http.ListenAndServe(":8080", nil)
+}
+```
+
+#### 移除自定义特征
+
+```go
+func main() {
+    // 添加特征并保存移除函数
+    removePattern := uautil.AddCustomBotPattern("testbot")
+
+    // 使用一段时间后...
+    // 移除特征
+    removePattern()
+
+    // 现在 "testbot" 不再被识别为机器人
+}
+```
+
+#### 临时添加特征
+
+```go
+func testWithCustomBot(t *testing.T) {
+    // 使用 defer 确保测试后清理
+    remove := uautil.AddCustomBotPattern("testcrawler")
+    defer remove()
+
+    // 测试代码...
+    req := httptest.NewRequest("GET", "/", nil)
+    req.Header.Set("User-Agent", "TestCrawler/1.0")
+
+    if !uautil.IsBot(req, false) {
+        t.Error("应该识别为机器人")
+    }
+
+    // 函数结束时自动移除特征
+}
+```
+
+## AddLegitimateBot
+
+添加自定义的合法爬虫特征。
+
+### 函数签名
+
+```go
+func AddLegitimateBot(pattern string) func()
+```
+
+### 参数
+
+- `pattern` (string): 要添加的合法爬虫特征（不区分大小写）
+
+### 返回值
+
+- `func()`: 返回一个函数，调用该函数可以移除添加的特征
+
+### 使用示例
+
+#### 添加企业内部爬虫
+
+```go
+func main() {
+    // 添加公司内部爬虫为合法爬虫
+    uautil.AddLegitimateBot("mycompany-monitor")
+
+    middleware := uautil.BlockBotMiddleware(true)
+
+    handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("Success"))
+    })
+
+    // "MyCompany-Monitor/1.0" 在 allowLegitimate=true 时会被允许
+    http.ListenAndServe(":8080", middleware(handler))
+}
+```
+
+#### 白名单管理
+
+```go
+type BotWhitelist struct {
+    patterns []string
+    removers []func()
+}
+
+func (w *BotWhitelist) Add(patterns ...string) {
+    for _, p := range patterns {
+        remove := uautil.AddLegitimateBot(p)
+        w.patterns = append(w.patterns, p)
+        w.removers = append(w.removers, remove)
+    }
+}
+
+func (w *BotWhitelist) Clear() {
+    for _, remove := range w.removers {
+        remove()
+    }
+    w.patterns = nil
+    w.removers = nil
+}
+
+func main() {
+    whitelist := &BotWhitelist{}
+
+    // 批量添加白名单
+    whitelist.Add(
+        "company-monitor",
+        "internal-crawler",
+        "api-healthcheck",
+    )
+
+    // 清理白名单
+    defer whitelist.Clear()
+
+    // 应用程序代码...
+}
+```
+
+## GetBotPatterns
+
+获取当前的机器人特征列表（副本）。
+
+### 函数签名
+
+```go
+func GetBotPatterns() []string
+```
+
+### 返回值
+
+- `[]string`: 机器人特征列表的副本
+
+### 使用示例
+
+```go
+func main() {
+    patterns := uautil.GetBotPatterns()
+
+    fmt.Println("当前机器人特征:")
+    for _, p := range patterns {
+        fmt.Printf("- %s\n", p)
+    }
+}
+```
+
+## GetLegitimatePatterns
+
+获取当前的合法爬虫特征列表（副本）。
+
+### 函数签名
+
+```go
+func GetLegitimatePatterns() []string
+```
+
+### 返回值
+
+- `[]string`: 合法爬虫特征列表的副本
+
+### 使用示例
+
+```go
+func main() {
+    patterns := uautil.GetLegitimatePatterns()
+
+    fmt.Println("合法搜索引擎爬虫:")
+    for _, p := range patterns {
+        fmt.Printf("- %s\n", p)
+    }
+}
+```
+
+## 实际应用场景
+
+### 场景 1: 拦截特定爬虫
+
+```go
+func init() {
+    // 拦截发现的恶意爬虫
+    uautil.AddCustomBotPattern("badcrawler")
+    uautil.AddCustomBotPattern("aggressive-scraper")
+}
+```
+
+### 场景 2: 内部监控工具
+
+```go
+func init() {
+    // 允许内部监控工具
+    uautil.AddLegitimateBot("company-uptime-monitor")
+    uautil.AddLegitimateBot("company-api-tester")
+}
+```
+
+### 场景 3: 动态更新策略
+
+```go
+type BotFilter struct {
+    customPatterns map[string]func()
+    mu            sync.RWMutex
+}
+
+func (bf *BotFilter) AddPattern(pattern string) {
+    bf.mu.Lock()
+    defer bf.mu.Unlock()
+
+    if _, exists := bf.customPatterns[pattern]; !exists {
+        remove := uautil.AddCustomBotPattern(pattern)
+        bf.customPatterns[pattern] = remove
+        log.Printf("Added bot pattern: %s", pattern)
+    }
+}
+
+func (bf *BotFilter) RemovePattern(pattern string) {
+    bf.mu.Lock()
+    defer bf.mu.Unlock()
+
+    if remove, exists := bf.customPatterns[pattern]; exists {
+        remove()
+        delete(bf.customPatterns, pattern)
+        log.Printf("Removed bot pattern: %s", pattern)
+    }
+}
+
+func (bf *BotFilter) LoadFromConfig(configFile string) error {
+    // 从配置文件加载机器人特征
+    // 实现略...
+    return nil
+}
+```
+
+### 场景 4: API 动态管理
+
+```go
+// 提供 API 端点动态管理机器人特征
+func adminHandler(w http.ResponseWriter, r *http.Request) {
+    if r.Method == "POST" {
+        pattern := r.FormValue("pattern")
+        isLegitimate := r.FormValue("legitimate") == "true"
+
+        if isLegitimate {
+            uautil.AddLegitimateBot(pattern)
+            w.Write([]byte(fmt.Sprintf("Added legitimate bot: %s", pattern)))
+        } else {
+            uautil.AddCustomBotPattern(pattern)
+            w.Write([]byte(fmt.Sprintf("Added bot pattern: %s", pattern)))
+        }
+        return
+    }
+
+    if r.Method == "GET" {
+        botPatterns := uautil.GetBotPatterns()
+        legitimatePatterns := uautil.GetLegitimatePatterns()
+
+        response := map[string]interface{}{
+            "bot_patterns":        botPatterns,
+            "legitimate_patterns": legitimatePatterns,
+        }
+
+        json.NewEncoder(w).Encode(response)
+    }
+}
+```
+
+## 注意事项
+
+1. **大小写**: 特征匹配不区分大小写，自动转换为小写
+2. **部分匹配**: 使用 `strings.Contains` 进行匹配
+3. **线程安全**: 当前实现不是线程安全的，如需并发修改请加锁
+4. **持久化**: 特征不会持久化，重启后需重新添加
+5. **返回副本**: `GetBotPatterns` 和 `GetLegitimatePatterns` 返回副本，修改不影响原列表
+
+## 最佳实践
+
+1. **初始化时添加**: 在应用启动时添加自定义特征
+2. **使用配置文件**: 将自定义特征存储在配置文件中
+3. **记录日志**: 添加/移除特征时记录日志
+4. **定期审查**: 定期审查自定义特征的有效性
+5. **避免过度匹配**: 特征应该足够具体，避免误杀
+
+## 另请参阅
+
+- [IsBot](/docs/uautil/is-bot) - 检测请求是否来自机器人
+- [IsBotUserAgent](/docs/uautil/is-bot-user-agent) - 直接检测 User-Agent 字符串
+- [BlockBotMiddleware](/docs/uautil/block-bot-middleware) - 中间件方式拦截机器人

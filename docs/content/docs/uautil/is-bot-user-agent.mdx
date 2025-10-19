@@ -1,0 +1,174 @@
+---
+title: IsBotUserAgent
+description: 直接检测 User-Agent 字符串是否为机器人
+---
+
+# IsBotUserAgent
+
+直接检测 User-Agent 字符串是否为机器人，不需要 HTTP 请求对象。
+
+## 函数签名
+
+```go
+func IsBotUserAgent(userAgent string, allowLegitimate bool) bool
+```
+
+## 参数
+
+- `userAgent` (string): User-Agent 字符串
+- `allowLegitimate` (bool): 是否允许合法的搜索引擎爬虫
+  - `true`: 允许合法搜索引擎，仅识别恶意机器人
+  - `false`: 识别所有机器人
+
+## 返回值
+
+- `bool`: 如果是机器人返回 `true`，否则返回 `false`
+
+## 使用示例
+
+### 基本用法
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/woodchen-ink/go-web-utils/uautil"
+)
+
+func main() {
+    // 检测常见机器人
+    ua1 := "python-requests/2.28.1"
+    if uautil.IsBotUserAgent(ua1, false) {
+        fmt.Println("python-requests 是机器人")
+    }
+
+    // 检测正常浏览器
+    ua2 := "Mozilla/5.0 (Windows NT 10.0) Chrome/91.0"
+    if !uautil.IsBotUserAgent(ua2, false) {
+        fmt.Println("Chrome 不是机器人")
+    }
+
+    // 检测搜索引擎（SEO 友好模式）
+    ua3 := "Mozilla/5.0 (compatible; Googlebot/2.1)"
+    if !uautil.IsBotUserAgent(ua3, true) {
+        fmt.Println("Googlebot 在 allowLegitimate=true 时被允许")
+    }
+}
+```
+
+### 批量检测
+
+```go
+func checkUserAgents(userAgents []string) {
+    for _, ua := range userAgents {
+        isBot := uautil.IsBotUserAgent(ua, true)
+        status := "正常"
+        if isBot {
+            status = "机器人"
+        }
+        fmt.Printf("[%s] %s\n", status, ua)
+    }
+}
+
+func main() {
+    userAgents := []string{
+        "python-requests/2.28.1",
+        "Mozilla/5.0 (Windows NT 10.0) Chrome/91.0",
+        "curl/7.68.0",
+        "Mozilla/5.0 (compatible; Googlebot/2.1)",
+    }
+
+    checkUserAgents(userAgents)
+}
+```
+
+### 日志分析
+
+```go
+import (
+    "bufio"
+    "os"
+    "strings"
+)
+
+// 分析访问日志中的机器人
+func analyzeLogs(logFile string) error {
+    file, err := os.Open(logFile)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+
+    scanner := bufio.NewScanner(file)
+    botCount := 0
+    totalCount := 0
+
+    for scanner.Scan() {
+        line := scanner.Text()
+        // 假设日志格式包含 User-Agent
+        ua := extractUserAgent(line)
+
+        totalCount++
+        if uautil.IsBotUserAgent(ua, true) {
+            botCount++
+            fmt.Printf("发现机器人: %s\n", ua)
+        }
+    }
+
+    fmt.Printf("总请求: %d, 机器人: %d (%.2f%%)\n",
+        totalCount, botCount, float64(botCount)/float64(totalCount)*100)
+
+    return scanner.Err()
+}
+
+func extractUserAgent(logLine string) string {
+    // 实现从日志行中提取 User-Agent 的逻辑
+    // 这里只是示例
+    return ""
+}
+```
+
+### 自定义响应
+
+```go
+func handleUserAgent(ua string) string {
+    if ua == "" {
+        return "缺少 User-Agent"
+    }
+
+    if uautil.IsBotUserAgent(ua, true) {
+        // 恶意机器人
+        return "检测到恶意机器人，访问被拒绝"
+    }
+
+    // 正常访问（包括合法搜索引擎）
+    return "欢迎访问"
+}
+```
+
+## 与 IsBot 的区别
+
+| 特性 | IsBotUserAgent | IsBot |
+|------|----------------|-------|
+| 输入参数 | User-Agent 字符串 | HTTP 请求对象 |
+| 使用场景 | 日志分析、批量检测 | HTTP 处理器中使用 |
+| 便捷性 | 需要手动提取 UA | 自动从请求提取 |
+
+## 性能说明
+
+- 时间复杂度: O(n)，n 为特征列表长度
+- 空间复杂度: O(1)
+- 字符串比较使用小写转换，性能开销极小
+
+## 注意事项
+
+1. **空字符串**: 空 User-Agent 会被识别为机器人
+2. **大小写**: 自动转换为小写进行匹配，无需担心大小写问题
+3. **部分匹配**: 使用 `strings.Contains` 进行匹配，支持部分匹配
+
+## 另请参阅
+
+- [IsBot](/docs/uautil/is-bot) - 从 HTTP 请求检测机器人
+- [BlockBotMiddleware](/docs/uautil/block-bot-middleware) - 中间件方式拦截机器人
+- [AddCustomBotPattern](/docs/uautil/custom-patterns) - 添加自定义机器人特征
