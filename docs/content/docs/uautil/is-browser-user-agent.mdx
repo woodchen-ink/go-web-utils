@@ -1,0 +1,154 @@
+---
+title: IsBrowserUserAgent
+description: 直接检测 User-Agent 字符串是否为浏览器
+---
+
+# IsBrowserUserAgent
+
+直接检测 User-Agent 字符串是否为浏览器,不需要完整的 HTTP 请求对象。
+
+## 函数签名
+
+```go
+func IsBrowserUserAgent(userAgent string) bool
+```
+
+## 参数
+
+- `userAgent`: User-Agent 字符串
+
+## 返回值
+
+- `bool`: 如果是浏览器返回 `true`,否则返回 `false`
+
+## 使用示例
+
+### 基本用法
+
+```go
+import "github.com/woodchen-ink/go-web-utils/uautil"
+
+func main() {
+    ua := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/91.0.4472.124"
+
+    if uautil.IsBrowserUserAgent(ua) {
+        fmt.Println("这是浏览器")
+    } else {
+        fmt.Println("这不是浏览器")
+    }
+}
+```
+
+### 批量检测
+
+```go
+func validateUserAgents(userAgents []string) []string {
+    var browsers []string
+    for _, ua := range userAgents {
+        if uautil.IsBrowserUserAgent(ua) {
+            browsers = append(browsers, ua)
+        }
+    }
+    return browsers
+}
+```
+
+### 日志分析
+
+```go
+func analyzeLogs(logEntries []LogEntry) {
+    browserCount := 0
+    botCount := 0
+
+    for _, entry := range logEntries {
+        if uautil.IsBrowserUserAgent(entry.UserAgent) {
+            browserCount++
+        } else {
+            botCount++
+        }
+    }
+
+    fmt.Printf("浏览器: %d, 机器人/工具: %d\n", browserCount, botCount)
+}
+```
+
+## 检测逻辑
+
+该函数会进行以下检测:
+
+1. **空字符串**: 返回 `false`
+2. **机器人特征检查**: 如果包含以下特征,返回 `false`:
+   - `python-requests`, `curl`, `wget`
+   - `scrapy`, `selenium`, `phantomjs`
+   - `bot`, `crawler`, `spider`, `scraper`
+   - 等等...
+3. **浏览器特征检查**: 检查是否包含浏览器标识,包括:
+   - `mozilla/` (几乎所有现代浏览器都包含)
+   - `chrome/`, `firefox/`, `safari/`
+   - `edge/`, `edg/` (Edge Chromium)
+   - `opera/`, `opr/` (Opera Chromium)
+   - `brave/`, `vivaldi/`
+
+## 测试示例
+
+```go
+func TestBrowserDetection(t *testing.T) {
+    testCases := []struct {
+        ua       string
+        expected bool
+    }{
+        {
+            ua:       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0",
+            expected: true,
+        },
+        {
+            ua:       "curl/7.68.0",
+            expected: false,
+        },
+        {
+            ua:       "python-requests/2.26.0",
+            expected: false,
+        },
+        {
+            ua:       "",
+            expected: false,
+        },
+    }
+
+    for _, tc := range testCases {
+        result := uautil.IsBrowserUserAgent(tc.ua)
+        if result != tc.expected {
+            t.Errorf("UA: %s, expected %v, got %v", tc.ua, tc.expected, result)
+        }
+    }
+}
+```
+
+## 支持的浏览器
+
+- ✅ Chrome / Chromium
+- ✅ Firefox
+- ✅ Safari
+- ✅ Microsoft Edge (包括 Chromium 版本)
+- ✅ Opera (包括 Chromium 版本)
+- ✅ Brave
+- ✅ Vivaldi
+- ✅ 其他基于 Mozilla 内核的浏览器
+
+## 性能特点
+
+- **快速检测**: 简单的字符串包含检查,性能开销极小
+- **内存友好**: 不需要正则表达式或复杂的解析
+- **适用场景**: 适合高并发场景和日志分析
+
+## 注意事项
+
+1. **大小写不敏感**: 函数会自动转换为小写进行比较
+2. **User-Agent 伪造**: 检测基于 User-Agent 字符串,可以被伪造
+3. **无 HTTP 请求**: 该函数是纯函数,不依赖 HTTP 请求对象,适合离线分析
+
+## 相关函数
+
+- [IsBrowser](/docs/uautil/is-browser) - 检测 HTTP 请求是否来自浏览器
+- [BrowserOnlyMiddleware](/docs/uautil/browser-only-middleware) - 仅允许浏览器访问的中间件
+- [AddCustomBrowserPattern](/docs/uautil/add-custom-browser-pattern) - 添加自定义浏览器特征

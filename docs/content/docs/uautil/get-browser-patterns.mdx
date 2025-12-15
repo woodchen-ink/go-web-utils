@@ -1,0 +1,278 @@
+---
+title: GetBrowserPatterns
+description: 获取当前的浏览器特征列表
+---
+
+# GetBrowserPatterns
+
+获取当前系统中配置的所有浏览器 User-Agent 特征列表的副本。
+
+## 函数签名
+
+```go
+func GetBrowserPatterns() []string
+```
+
+## 返回值
+
+- `[]string`: 浏览器特征列表的副本
+
+## 使用示例
+
+### 查看所有浏览器特征
+
+```go
+import (
+    "fmt"
+    "github.com/woodchen-ink/go-web-utils/uautil"
+)
+
+func main() {
+    patterns := uautil.GetBrowserPatterns()
+
+    fmt.Println("当前浏览器特征列表:")
+    for i, pattern := range patterns {
+        fmt.Printf("%d. %s\n", i+1, pattern)
+    }
+}
+
+// 输出示例:
+// 当前浏览器特征列表:
+// 1. mozilla/
+// 2. chrome/
+// 3. safari/
+// 4. firefox/
+// 5. edge/
+// 6. edg/
+// 7. opera/
+// 8. opr/
+// 9. brave/
+// 10. vivaldi/
+```
+
+### 检查特定特征是否存在
+
+```go
+func hasBrowserPattern(pattern string) bool {
+    patterns := uautil.GetBrowserPatterns()
+    for _, p := range patterns {
+        if p == strings.ToLower(pattern) {
+            return true
+        }
+    }
+    return false
+}
+
+func main() {
+    if hasBrowserPattern("chrome/") {
+        fmt.Println("Chrome 特征已配置")
+    }
+}
+```
+
+### 导出配置
+
+```go
+import (
+    "encoding/json"
+    "os"
+)
+
+func exportBrowserPatterns(filename string) error {
+    patterns := uautil.GetBrowserPatterns()
+
+    data, err := json.MarshalIndent(patterns, "", "  ")
+    if err != nil {
+        return err
+    }
+
+    return os.WriteFile(filename, data, 0644)
+}
+
+func main() {
+    exportBrowserPatterns("browser-patterns.json")
+}
+```
+
+### 调试和日志记录
+
+```go
+import "log"
+
+func logCurrentConfiguration() {
+    patterns := uautil.GetBrowserPatterns()
+    log.Printf("已配置 %d 个浏览器特征: %v", len(patterns), patterns)
+}
+
+func init() {
+    // 添加自定义特征
+    uautil.AddCustomBrowserPattern("electron/")
+    uautil.AddCustomBrowserPattern("webview/")
+
+    // 记录当前配置
+    logCurrentConfiguration()
+}
+```
+
+### 配置验证
+
+```go
+func validateBrowserConfig() error {
+    patterns := uautil.GetBrowserPatterns()
+
+    if len(patterns) == 0 {
+        return fmt.Errorf("没有配置任何浏览器特征")
+    }
+
+    // 检查是否包含基本的浏览器特征
+    requiredPatterns := []string{"chrome/", "firefox/", "safari/"}
+    for _, required := range requiredPatterns {
+        found := false
+        for _, pattern := range patterns {
+            if pattern == required {
+                found = true
+                break
+            }
+        }
+        if !found {
+            return fmt.Errorf("缺少必要的浏览器特征: %s", required)
+        }
+    }
+
+    return nil
+}
+```
+
+## 内置浏览器特征
+
+默认情况下,系统包含以下浏览器特征:
+
+```go
+var browserPatterns = []string{
+    "mozilla/",   // 几乎所有现代浏览器都包含 Mozilla
+    "chrome/",    // Google Chrome
+    "safari/",    // Safari
+    "firefox/",   // Firefox
+    "edge/",      // Microsoft Edge (传统版)
+    "edg/",       // Microsoft Edge Chromium
+    "opera/",     // Opera (传统版)
+    "opr/",       // Opera Chromium
+    "brave/",     // Brave 浏览器
+    "vivaldi/",   // Vivaldi 浏览器
+}
+```
+
+## 返回值特性
+
+### 返回副本而非引用
+
+该函数返回的是特征列表的**副本**,而不是原始列表的引用。这意味着:
+
+```go
+patterns := uautil.GetBrowserPatterns()
+
+// 修改返回的切片不会影响内部配置
+patterns[0] = "modified"
+
+// 内部配置保持不变
+newPatterns := uautil.GetBrowserPatterns()
+fmt.Println(newPatterns[0]) // 仍然是 "mozilla/"
+```
+
+### 安全性
+
+这种设计保证了配置的安全性,外部代码无法通过修改返回值来破坏内部状态。
+
+## 典型应用场景
+
+### 1. 配置审计
+
+```go
+func auditConfiguration() {
+    patterns := uautil.GetBrowserPatterns()
+
+    fmt.Printf("浏览器特征配置审计报告\n")
+    fmt.Printf("========================\n")
+    fmt.Printf("总计: %d 个特征\n\n", len(patterns))
+
+    fmt.Println("内置特征:")
+    defaultPatterns := []string{"mozilla/", "chrome/", "safari/", "firefox/"}
+    for _, pattern := range patterns {
+        isDefault := false
+        for _, def := range defaultPatterns {
+            if pattern == def {
+                isDefault = true
+                break
+            }
+        }
+        if isDefault {
+            fmt.Printf("  - %s (内置)\n", pattern)
+        }
+    }
+
+    fmt.Println("\n自定义特征:")
+    for _, pattern := range patterns {
+        isCustom := true
+        for _, def := range defaultPatterns {
+            if pattern == def {
+                isCustom = false
+                break
+            }
+        }
+        if isCustom {
+            fmt.Printf("  - %s (自定义)\n", pattern)
+        }
+    }
+}
+```
+
+### 2. 健康检查
+
+```go
+func healthCheck() map[string]interface{} {
+    patterns := uautil.GetBrowserPatterns()
+
+    return map[string]interface{}{
+        "browser_patterns_count": len(patterns),
+        "browser_patterns":       patterns,
+        "status":                 "healthy",
+    }
+}
+```
+
+### 3. 文档生成
+
+```go
+func generateDocumentation() string {
+    patterns := uautil.GetBrowserPatterns()
+
+    doc := "# 支持的浏览器\n\n"
+    doc += "当前系统识别以下浏览器特征:\n\n"
+
+    for _, pattern := range patterns {
+        doc += fmt.Sprintf("- `%s`\n", pattern)
+    }
+
+    return doc
+}
+```
+
+## 性能说明
+
+- **时间复杂度**: O(n),n 为特征数量
+- **空间复杂度**: O(n),创建新切片并复制数据
+- **开销**: 极小,通常只有 10 个左右的特征
+
+## 注意事项
+
+1. **副本返回**: 返回的是副本,修改不会影响内部配置
+2. **只读操作**: 该函数是只读操作,不会修改任何状态
+3. **线程安全**: 读操作本身是安全的,但如果同时有 `AddCustomBrowserPattern` 调用可能存在竞态
+
+## 相关函数
+
+- [AddCustomBrowserPattern](/docs/uautil/add-custom-browser-pattern) - 添加自定义浏览器特征
+- [IsBrowser](/docs/uautil/is-browser) - 检测请求是否来自浏览器
+- [IsBrowserUserAgent](/docs/uautil/is-browser-user-agent) - 直接检测 User-Agent 字符串
+- [GetBotPatterns](/docs/uautil/custom-patterns#getbotpatterns) - 获取机器人特征列表
+- [GetLegitimatePatterns](/docs/uautil/custom-patterns#getlegitimatepatterns) - 获取合法爬虫特征列表

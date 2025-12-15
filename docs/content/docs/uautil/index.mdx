@@ -70,12 +70,38 @@ func main() {
 }
 ```
 
+### 仅允许浏览器访问
+
+```go
+func main() {
+    handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("欢迎使用浏览器访问"))
+    })
+
+    // 仅允许浏览器访问,拦截所有非浏览器请求
+    middleware := uautil.BrowserOnlyMiddleware("仅支持浏览器访问")
+    protectedHandler := middleware(handler)
+
+    http.ListenAndServe(":8080", protectedHandler)
+}
+```
+
 ## 📚 功能列表
+
+### 机器人检测
 
 - [IsBot](/docs/uautil/is-bot) - 检测请求是否来自机器人
 - [IsBotUserAgent](/docs/uautil/is-bot-user-agent) - 直接检测 User-Agent 字符串
 - [BlockBotMiddleware](/docs/uautil/block-bot-middleware) - HTTP 中间件拦截机器人
 - [AddCustomBotPattern](/docs/uautil/custom-patterns) - 添加自定义机器人特征
+
+### 浏览器检测
+
+- [IsBrowser](/docs/uautil/is-browser) - 检测请求是否来自真实浏览器
+- [IsBrowserUserAgent](/docs/uautil/is-browser-user-agent) - 直接检测 User-Agent 字符串是否为浏览器
+- [BrowserOnlyMiddleware](/docs/uautil/browser-only-middleware) - 仅允许浏览器访问的中间件
+- [AddCustomBrowserPattern](/docs/uautil/add-custom-browser-pattern) - 添加自定义浏览器特征
+- [GetBrowserPatterns](/docs/uautil/get-browser-patterns) - 获取当前浏览器特征列表
 
 ## 🤖 内置机器人特征
 
@@ -106,8 +132,18 @@ go test github.com/woodchen-ink/go-web-utils/uautil -cover
 
 ## 💡 使用场景
 
+### 机器人防护
+
 1. **保护 API**: 防止恶意爬虫消耗服务器资源
 2. **防止内容盗取**: 拦截自动化爬虫工具
 3. **SEO 优化**: 允许搜索引擎爬虫，拦截恶意机器人
 4. **流量控制**: 减少机器人产生的无效流量
 5. **安全防护**: 拦截扫描器和漏洞探测工具
+
+### 浏览器检测
+
+1. **Web 应用保护**: 确保 Web 界面只能通过浏览器访问
+2. **内容防盗**: 防止爬虫和自动化工具抓取内容
+3. **用户体验**: 为浏览器用户提供特定功能，拦截非浏览器客户端
+4. **混合应用**: 区分 API 请求和 Web 页面请求
+5. **统计分析**: 准确统计真实浏览器用户访问量

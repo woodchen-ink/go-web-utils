@@ -1,0 +1,273 @@
+---
+title: BrowserOnlyMiddleware
+description: 创建一个仅允许浏览器访问的 HTTP 中间件
+---
+
+# BrowserOnlyMiddleware
+
+创建一个 HTTP 中间件,仅允许来自浏览器的请求通过,拦截所有非浏览器访问(包括爬虫、命令行工具、脚本等)。
+
+## 函数签名
+
+```go
+func BrowserOnlyMiddleware(customMessage ...string) func(http.Handler) http.Handler
+```
+
+## 参数
+
+- `customMessage`: 可选的自定义拒绝消息。如果不提供,默认为 "Browser access only"
+
+## 返回值
+
+- `func(http.Handler) http.Handler`: HTTP 中间件函数
+
+## 使用示例
+
+### 基本用法
+
+```go
+import (
+    "net/http"
+    "github.com/woodchen-ink/go-web-utils/uautil"
+)
+
+func main() {
+    // 创建你的处理器
+    handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("欢迎使用浏览器访问"))
+    })
+
+    // 应用浏览器检测中间件
+    middleware := uautil.BrowserOnlyMiddleware()
+    protectedHandler := middleware(handler)
+
+    http.ListenAndServe(":8080", protectedHandler)
+}
+```
+
+### 自定义拒绝消息
+
+```go
+func main() {
+    handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("内容"))
+    })
+
+    // 使用自定义拒绝消息
+    middleware := uautil.BrowserOnlyMiddleware("请使用浏览器访问此页面")
+    protectedHandler := middleware(handler)
+
+    http.ListenAndServe(":8080", protectedHandler)
+}
+```
+
+### 保护特定路由
+
+```go
+func main() {
+    mux := http.NewServeMux()
+
+    // 公开 API - 不限制
+    mux.HandleFunc("/api/public", publicAPIHandler)
+
+    // 网页界面 - 仅限浏览器
+    browserOnly := uautil.BrowserOnlyMiddleware("仅支持浏览器访问")
+    mux.Handle("/dashboard", browserOnly(http.HandlerFunc(dashboardHandler)))
+    mux.Handle("/admin", browserOnly(http.HandlerFunc(adminHandler)))
+
+    http.ListenAndServe(":8080", mux)
+}
+```
+
+### 链式中间件
+
+```go
+func main() {
+    handler := http.HandlerFunc(pageHandler)
+
+    // 组合多个中间件
+    handler = loggingMiddleware(handler)
+    handler = uautil.BrowserOnlyMiddleware()(handler)
+    handler = authMiddleware(handler)
+
+    http.ListenAndServe(":8080", handler)
+}
+```
+
+### 使用第三方路由库
+
+#### 使用 gorilla/mux
+
+```go
+import (
+    "github.com/gorilla/mux"
+    "github.com/woodchen-ink/go-web-utils/uautil"
+)
+
+func main() {
+    r := mux.NewRouter()
+
+    // 为特定路由应用中间件
+    r.Handle("/web-app", uautil.BrowserOnlyMiddleware()(
+        http.HandlerFunc(webAppHandler),
+    ))
+
+    // 为路由组应用中间件
+    webRoutes := r.PathPrefix("/web").Subrouter()
+    webRoutes.Use(uautil.BrowserOnlyMiddleware())
+    webRoutes.HandleFunc("/dashboard", dashboardHandler)
+    webRoutes.HandleFunc("/profile", profileHandler)
+
+    http.ListenAndServe(":8080", r)
+}
+```
+
+#### 使用 chi
+
+```go
+import (
+    "github.com/go-chi/chi/v5"
+    "github.com/woodchen-ink/go-web-utils/uautil"
+)
+
+func main() {
+    r := chi.NewRouter()
+
+    // 全局应用
+    r.Use(uautil.BrowserOnlyMiddleware())
+
+    // 或者针对路由组
+    r.Group(func(r chi.Router) {
+        r.Use(uautil.BrowserOnlyMiddleware("仅限浏览器"))
+        r.Get("/dashboard", dashboardHandler)
+        r.Get("/settings", settingsHandler)
+    })
+
+    http.ListenAndServe(":8080", r)
+}
+```
+
+#### 使用 Gin
+
+```go
+import (
+    "github.com/gin-gonic/gin"
+    "github.com/woodchen-ink/go-web-utils/uautil"
+)
+
+// Gin 适配器
+func GinBrowserOnly() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        if !uautil.IsBrowser(c.Request) {
+            c.String(403, "仅允许浏览器访问")
+            c.Abort()
+            return
+        }
+        c.Next()
+    }
+}
+
+func main() {
+    r := gin.Default()
+
+    // 应用到特定路由
+    r.GET("/web", GinBrowserOnly(), webHandler)
+
+    // 应用到路由组
+    web := r.Group("/web")
+    web.Use(GinBrowserOnly())
+    {
+        web.GET("/dashboard", dashboardHandler)
+        web.GET("/profile", profileHandler)
+    }
+
+    r.Run(":8080")
+}
+```
+
+## 工作原理
+
+当请求到达时,中间件会:
+
+1. 调用 `IsBrowser()` 检测请求是否来自浏览器
+2. 如果不是浏览器:
+   - 返回 `403 Forbidden` 状态码
+   - 返回拒绝消息
+   - 不调用下一个处理器
+3. 如果是浏览器:
+   - 调用 `next.ServeHTTP()` 继续处理请求
+
+## 典型应用场景
+
+### 1. Web 应用界面保护
+
+```go
+// 确保 Web 界面只能通过浏览器访问
+mux.Handle("/app/", uautil.BrowserOnlyMiddleware()(appHandler))
+```
+
+### 2. 内容防盗
+
+```go
+// 防止爬虫抓取内容
+mux.Handle("/content/", uautil.BrowserOnlyMiddleware("请使用浏览器查看内容")(contentHandler))
+```
+
+### 3. 混合 API 和 Web
+
+```go
+func main() {
+    mux := http.NewServeMux()
+
+    // API 路由 - 允许所有客户端
+    mux.HandleFunc("/api/", apiHandler)
+
+    // Web 路由 - 仅限浏览器
+    browserOnly := uautil.BrowserOnlyMiddleware()
+    mux.Handle("/", browserOnly(http.HandlerFunc(webHandler)))
+
+    http.ListenAndServe(":8080", mux)
+}
+```
+
+## 响应示例
+
+当非浏览器访问时:
+
+```
+HTTP/1.1 403 Forbidden
+Content-Type: text/plain; charset=utf-8
+X-Content-Type-Options: nosniff
+
+Browser access only
+```
+
+使用自定义消息时:
+
+```
+HTTP/1.1 403 Forbidden
+Content-Type: text/plain; charset=utf-8
+X-Content-Type-Options: nosniff
+
+仅允许浏览器访问
+```
+
+## 性能特点
+
+- **低开销**: 简单的字符串检查,性能影响极小
+- **高并发**: 适合高并发场景
+- **无状态**: 不保存任何状态,适合分布式部署
+
+## 注意事项
+
+1. **API 路由**: 不要对 API 路由使用此中间件,除非你明确只想支持浏览器客户端
+2. **搜索引擎**: 该中间件会拦截搜索引擎爬虫,影响 SEO
+3. **User-Agent 伪造**: 可以通过伪造 User-Agent 绕过检测
+4. **自定义浏览器**: 非主流浏览器可能无法识别,可使用 [AddCustomBrowserPattern](/docs/uautil/add-custom-browser-pattern) 添加
+
+## 相关函数
+
+- [IsBrowser](/docs/uautil/is-browser) - 检测请求是否来自浏览器
+- [IsBrowserUserAgent](/docs/uautil/is-browser-user-agent) - 直接检测 User-Agent 字符串
+- [AddCustomBrowserPattern](/docs/uautil/add-custom-browser-pattern) - 添加自定义浏览器特征
+- [BlockBotMiddleware](/docs/uautil/block-bot-middleware) - 拦截机器人的中间件

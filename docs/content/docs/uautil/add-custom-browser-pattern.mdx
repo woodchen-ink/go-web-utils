@@ -1,0 +1,290 @@
+---
+title: AddCustomBrowserPattern
+description: 添加自定义的浏览器特征
+---
+
+# AddCustomBrowserPattern
+
+添加自定义的浏览器 User-Agent 特征,用于识别特殊的浏览器或客户端。
+
+## 函数签名
+
+```go
+func AddCustomBrowserPattern(pattern string) func()
+```
+
+## 参数
+
+- `pattern`: 要添加的浏览器特征字符串(大小写不敏感)
+
+## 返回值
+
+- `func()`: 移除该特征的函数,调用即可移除添加的特征
+
+## 使用示例
+
+### 基本用法
+
+```go
+import "github.com/woodchen-ink/go-web-utils/uautil"
+
+func main() {
+    // 添加自定义浏览器特征
+    remove := uautil.AddCustomBrowserPattern("my-custom-browser/")
+
+    // 现在包含 "my-custom-browser/" 的 UA 会被识别为浏览器
+    ua := "My-Custom-Browser/1.0"
+    if uautil.IsBrowserUserAgent(ua) {
+        fmt.Println("识别为浏览器")
+    }
+
+    // 使用完毕后移除
+    remove()
+}
+```
+
+### 添加多个自定义特征
+
+```go
+func setupCustomBrowsers() {
+    // 添加多个自定义浏览器
+    uautil.AddCustomBrowserPattern("electron/")
+    uautil.AddCustomBrowserPattern("webview/")
+    uautil.AddCustomBrowserPattern("cordova/")
+}
+```
+
+### 临时添加特征
+
+```go
+func processWithCustomPattern(userAgent string) bool {
+    // 临时添加特征
+    remove := uautil.AddCustomBrowserPattern("temp-browser/")
+    defer remove() // 函数结束时自动移除
+
+    return uautil.IsBrowserUserAgent(userAgent)
+}
+```
+
+### 配置管理
+
+```go
+type Config struct {
+    CustomBrowsers []string
+}
+
+func applyConfig(cfg Config) []func() {
+    var removers []func()
+
+    // 批量添加自定义浏览器特征
+    for _, pattern := range cfg.CustomBrowsers {
+        remove := uautil.AddCustomBrowserPattern(pattern)
+        removers = append(removers, remove)
+    }
+
+    return removers
+}
+
+func main() {
+    cfg := Config{
+        CustomBrowsers: []string{
+            "electron/",
+            "webview/",
+            "cordova/",
+        },
+    }
+
+    removers := applyConfig(cfg)
+
+    // 使用完毕后批量移除
+    defer func() {
+        for _, remove := range removers {
+            remove()
+        }
+    }()
+
+    // 你的应用逻辑...
+}
+```
+
+## 常见应用场景
+
+### 1. Electron 应用
+
+```go
+func init() {
+    // Electron 应用通常包含 "Electron" 标识
+    uautil.AddCustomBrowserPattern("electron/")
+}
+
+// Electron UA 示例:
+// Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) MyApp/1.0.0 Chrome/91.0.4472.124 Electron/13.1.7 Safari/537.36
+```
+
+### 2. 移动应用 WebView
+
+```go
+func init() {
+    // 允许移动应用的 WebView
+    uautil.AddCustomBrowserPattern("webview/")
+    uautil.AddCustomBrowserPattern("wv)")  // Android WebView 标识
+}
+
+// WebView UA 示例:
+// Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/91.0.4472.120 Mobile Safari/537.36 wv
+```
+
+### 3. 混合应用框架
+
+```go
+func init() {
+    // Cordova/PhoneGap 应用
+    uautil.AddCustomBrowserPattern("cordova/")
+
+    // React Native
+    uautil.AddCustomBrowserPattern("react-native/")
+
+    // Ionic
+    uautil.AddCustomBrowserPattern("ionic/")
+}
+```
+
+### 4. 小程序/快应用
+
+```go
+func init() {
+    // 微信小程序
+    uautil.AddCustomBrowserPattern("miniprogram/")
+    uautil.AddCustomBrowserPattern("micromessenger/")
+
+    // 支付宝小程序
+    uautil.AddCustomBrowserPattern("alipay/")
+
+    // 快应用
+    uautil.AddCustomBrowserPattern("quickapp/")
+}
+```
+
+### 5. 自定义浏览器内核
+
+```go
+func init() {
+    // UC 浏览器
+    uautil.AddCustomBrowserPattern("ucbrowser/")
+
+    // QQ 浏览器
+    uautil.AddCustomBrowserPattern("qqbrowser/")
+
+    // 360 浏览器
+    uautil.AddCustomBrowserPattern("360se/")
+    uautil.AddCustomBrowserPattern("360ee/")
+}
+```
+
+## 获取当前浏览器特征列表
+
+```go
+func showBrowserPatterns() {
+    patterns := uautil.GetBrowserPatterns()
+    fmt.Println("当前浏览器特征列表:")
+    for i, pattern := range patterns {
+        fmt.Printf("%d. %s\n", i+1, pattern)
+    }
+}
+```
+
+## 线程安全性
+
+⚠️ **注意**: `AddCustomBrowserPattern` 不是线程安全的。建议在应用启动时(如 `init()` 函数或 `main()` 函数开始)进行配置,避免在运行时并发调用。
+
+```go
+// ✅ 推荐: 在 init 中配置
+func init() {
+    uautil.AddCustomBrowserPattern("custom-browser/")
+}
+
+// ❌ 不推荐: 在运行时并发调用
+func handler(w http.ResponseWriter, r *http.Request) {
+    uautil.AddCustomBrowserPattern("temp/") // 可能导致竞态条件
+}
+```
+
+## 最佳实践
+
+### 1. 集中管理配置
+
+```go
+// config/browser.go
+package config
+
+import "github.com/woodchen-ink/go-web-utils/uautil"
+
+func InitBrowserPatterns() {
+    customPatterns := []string{
+        "electron/",
+        "webview/",
+        "cordova/",
+        "miniprogram/",
+    }
+
+    for _, pattern := range customPatterns {
+        uautil.AddCustomBrowserPattern(pattern)
+    }
+}
+```
+
+### 2. 从配置文件读取
+
+```go
+import (
+    "encoding/json"
+    "os"
+)
+
+type AppConfig struct {
+    CustomBrowserPatterns []string `json:"custom_browser_patterns"`
+}
+
+func loadConfig() {
+    data, _ := os.ReadFile("config.json")
+    var cfg AppConfig
+    json.Unmarshal(data, &cfg)
+
+    for _, pattern := range cfg.CustomBrowserPatterns {
+        uautil.AddCustomBrowserPattern(pattern)
+    }
+}
+```
+
+### 3. 环境变量配置
+
+```go
+import (
+    "os"
+    "strings"
+)
+
+func init() {
+    // 从环境变量读取: CUSTOM_BROWSERS=electron/,webview/,cordova/
+    if browsers := os.Getenv("CUSTOM_BROWSERS"); browsers != "" {
+        patterns := strings.Split(browsers, ",")
+        for _, pattern := range patterns {
+            uautil.AddCustomBrowserPattern(strings.TrimSpace(pattern))
+        }
+    }
+}
+```
+
+## 注意事项
+
+1. **大小写不敏感**: 添加的特征会自动转换为小写
+2. **完整匹配**: 确保特征足够独特,避免误判
+3. **斜杠建议**: 建议在特征后添加 `/` 以提高准确性(如 `electron/` 而不是 `electron`)
+4. **启动时配置**: 建议在应用启动时统一配置,避免运行时动态修改
+
+## 相关函数
+
+- [IsBrowser](/docs/uautil/is-browser) - 检测请求是否来自浏览器
+- [IsBrowserUserAgent](/docs/uautil/is-browser-user-agent) - 直接检测 User-Agent 字符串
+- [GetBrowserPatterns](/docs/uautil/get-browser-patterns) - 获取当前浏览器特征列表
+- [BrowserOnlyMiddleware](/docs/uautil/browser-only-middleware) - 仅允许浏览器访问的中间件

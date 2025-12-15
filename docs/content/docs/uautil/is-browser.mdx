@@ -1,0 +1,108 @@
+---
+title: IsBrowser
+description: 检测请求是否来自真实浏览器
+---
+
+# IsBrowser
+
+检测 HTTP 请求是否来自真实浏览器,通过检查 User-Agent 中是否包含浏览器特征来判断。
+
+## 函数签名
+
+```go
+func IsBrowser(r *http.Request) bool
+```
+
+## 参数
+
+- `r`: HTTP 请求对象
+
+## 返回值
+
+- `bool`: 如果是浏览器访问返回 `true`,否则返回 `false`
+
+## 使用示例
+
+### 基本用法
+
+```go
+import (
+    "net/http"
+    "github.com/woodchen-ink/go-web-utils/uautil"
+)
+
+func handler(w http.ResponseWriter, r *http.Request) {
+    if !uautil.IsBrowser(r) {
+        http.Error(w, "仅允许浏览器访问", http.StatusForbidden)
+        return
+    }
+
+    // 处理浏览器请求
+    w.Write([]byte("欢迎使用浏览器访问"))
+}
+```
+
+### 配合路由使用
+
+```go
+func main() {
+    http.HandleFunc("/browser-only", func(w http.ResponseWriter, r *http.Request) {
+        if !uautil.IsBrowser(r) {
+            http.Error(w, "请使用浏览器访问", http.StatusForbidden)
+            return
+        }
+        w.Write([]byte("浏览器访问成功"))
+    })
+
+    http.ListenAndServe(":8080", nil)
+}
+```
+
+## 检测逻辑
+
+该函数会进行以下检测:
+
+1. **空 User-Agent**: 返回 `false`
+2. **机器人特征**: 如果包含机器人特征(curl、wget、python-requests 等),返回 `false`
+3. **浏览器特征**: 检查是否包含浏览器标识,包括:
+   - Chrome (`chrome/`)
+   - Firefox (`firefox/`)
+   - Safari (`safari/`)
+   - Edge (`edge/`, `edg/`)
+   - Opera (`opera/`, `opr/`)
+   - Brave (`brave/`)
+   - Vivaldi (`vivaldi/`)
+   - Mozilla 通用标识 (`mozilla/`)
+
+## 常见浏览器 User-Agent 示例
+
+### ✅ 会被识别为浏览器
+
+```
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36
+Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0
+Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15
+```
+
+### ❌ 不会被识别为浏览器
+
+```
+curl/7.68.0
+python-requests/2.26.0
+Wget/1.20.3
+Go-http-client/1.1
+Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)
+```
+
+## 注意事项
+
+1. **搜索引擎爬虫**: 合法的搜索引擎爬虫(如 Googlebot)不会被识别为浏览器
+2. **自定义浏览器**: 可以使用 [AddCustomBrowserPattern](/docs/uautil/add-custom-browser-pattern) 添加自定义浏览器特征
+3. **性能**: 函数执行效率高,适合在高并发场景使用
+4. **User-Agent 伪造**: 该检测依赖于 User-Agent,理论上可以被伪造,但能过滤掉绝大多数自动化工具
+
+## 相关函数
+
+- [IsBrowserUserAgent](/docs/uautil/is-browser-user-agent) - 直接检测 User-Agent 字符串
+- [BrowserOnlyMiddleware](/docs/uautil/browser-only-middleware) - 仅允许浏览器访问的中间件
+- [AddCustomBrowserPattern](/docs/uautil/add-custom-browser-pattern) - 添加自定义浏览器特征
