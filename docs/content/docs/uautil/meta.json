@@ -5,6 +5,11 @@
     "is-bot",
     "is-bot-user-agent",
     "block-bot-middleware",
-    "custom-patterns"
+    "custom-patterns",
+    "is-browser",
+    "is-browser-user-agent",
+    "browser-only-middleware",
+    "add-custom-browser-pattern",
+    "get-browser-patterns"
   ]
 }
