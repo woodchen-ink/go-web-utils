@@ -93,6 +93,30 @@ func TestGetClientIP(t *testing.T) {
 			expected:   "203.0.113.10",
 		},
 		{
+			name: "AWS CloudFront IPv6带端口场景(无方括号)",
+			headers: map[string]string{
+				"CloudFront-Viewer-Address": "2a02:cf40:add:4002:91f2:a9b2:e09a:6fc6:41300",
+			},
+			remoteAddr: "192.168.1.1:8080",
+			expected:   "2a02:cf40:add:4002:91f2:a9b2:e09a:6fc6",
+		},
+		{
+			name: "AWS CloudFront IPv6带方括号端口场景",
+			headers: map[string]string{
+				"CloudFront-Viewer-Address": "[2001:db8::1]:54321",
+			},
+			remoteAddr: "192.168.1.1:8080",
+			expected:   "2001:db8::1",
+		},
+		{
+			name: "AWS CloudFront IPv6无端口场景",
+			headers: map[string]string{
+				"CloudFront-Viewer-Address": "2001:db8::1",
+			},
+			remoteAddr: "192.168.1.1:8080",
+			expected:   "2001:db8::1",
+		},
+		{
 			name: "Azure Front Door场景",
 			headers: map[string]string{
 				"X-Azure-ClientIP": "203.0.113.11",

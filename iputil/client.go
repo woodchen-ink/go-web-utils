@@ -46,6 +46,13 @@ GetClientIP 函数按以下优先级获取客户端 IP:
 			// 处理来自公网的有效IP
 		}
 	}
+
+安全提示 (信任边界):
+
+以上所有请求头都可以被直连客户端伪造。GetClientIP 的结果用于日志记录、
+数据展示是安全的; 但用于鉴权、限流、封禁等安全决策时, 服务必须部署在
+可信代理/CDN 之后, 并由代理层覆盖 (而非透传) 这些请求头, 否则攻击者
+可以通过伪造请求头冒充任意 IP。
 */
 package iputil
 
@@ -57,6 +64,9 @@ import (
 
 // GetClientIP 获取客户端真实IP地址
 // 支持多种CDN和代理场景，按优先级获取真实IP
+//
+// 安全提示: 所有请求头均可被直连客户端伪造, 结果用于安全决策 (鉴权/限流/封禁)
+// 时必须确保服务部署在可信代理之后且代理层会覆盖这些头, 详见包文档
 func GetClientIP(r *http.Request) string {
 	// 优先级1: Cloudflare
 	if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
@@ -100,11 +110,7 @@ func GetClientIP(r *http.Request) string {
 
 	// 优先级9: AWS CloudFront
 	if ip := r.Header.Get("CloudFront-Viewer-Address"); ip != "" {
-		// CloudFront 格式可能包含端口号，需要处理
-		if clientIP, _, err := net.SplitHostPort(ip); err == nil {
-			return clientIP
-		}
-		return ip
+		return stripViewerAddressPort(ip)
 	}
 
 	// 优先级10: Azure Front Door
@@ -132,4 +138,21 @@ func GetClientIP(r *http.Request) string {
 		return r.RemoteAddr // 如果解析失败，返回原始值
 	}
 	return ip
+}
+
+// stripViewerAddressPort 去掉 CloudFront-Viewer-Address 中附带的端口号
+// 该头格式为 "IP:port"，其中 IPv6 不带方括号（如 2a02:cf40::1:41300），
+// net.SplitHostPort 无法直接解析，需按最后一个冒号切分后校验 IP 合法性
+func stripViewerAddressPort(addr string) string {
+	// IPv4:port 或 [IPv6]:port
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	// 无方括号的 IPv6:port
+	if i := strings.LastIndex(addr, ":"); i > 0 {
+		if host := addr[:i]; net.ParseIP(host) != nil {
+			return host
+		}
+	}
+	return addr
 }
