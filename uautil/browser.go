@@ -34,6 +34,9 @@ func IsBrowserUserAgent(userAgent string) bool {
 		return false
 	}
 
+	patternsMu.RLock()
+	defer patternsMu.RUnlock()
+
 	// 如果匹配到机器人特征,不是浏览器
 	for _, pattern := range commonBotPatterns {
 		if strings.Contains(ua, pattern) {
@@ -71,13 +74,18 @@ func BrowserOnlyMiddleware(customMessage ...string) func(http.Handler) http.Hand
 }
 
 // AddCustomBrowserPattern 添加自定义的浏览器特征
-// 返回的函数可用于移除该特征
+// 返回的函数可用于移除该特征；添加与移除均可与检测函数并发调用
 func AddCustomBrowserPattern(pattern string) func() {
 	pattern = strings.ToLower(pattern)
+
+	patternsMu.Lock()
 	browserPatterns = append(browserPatterns, pattern)
+	patternsMu.Unlock()
 
 	// 返回移除函数
 	return func() {
+		patternsMu.Lock()
+		defer patternsMu.Unlock()
 		for i, p := range browserPatterns {
 			if p == pattern {
 				browserPatterns = append(browserPatterns[:i], browserPatterns[i+1:]...)
@@ -89,6 +97,8 @@ func AddCustomBrowserPattern(pattern string) func() {
 
 // GetBrowserPatterns 获取当前的浏览器特征列表（副本）
 func GetBrowserPatterns() []string {
+	patternsMu.RLock()
+	defer patternsMu.RUnlock()
 	patterns := make([]string, len(browserPatterns))
 	copy(patterns, browserPatterns)
 	return patterns

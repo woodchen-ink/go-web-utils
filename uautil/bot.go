@@ -4,7 +4,12 @@ package uautil
 import (
 	"net/http"
 	"strings"
+	"sync"
 )
+
+// patternsMu 保护本包所有特征列表 (commonBotPatterns / legitimateBotPatterns / browserPatterns)
+// 的并发读写；检测函数持读锁，AddXxx 及其返回的移除函数持写锁
+var patternsMu sync.RWMutex
 
 // 常见的机器人 User-Agent 特征列表
 var commonBotPatterns = []string{
@@ -59,34 +64,11 @@ var legitimateBotPatterns = []string{
 // IsBot 检测请求是否来自机器人
 // allowLegitimate 为 true 时允许合法的搜索引擎爬虫
 func IsBot(r *http.Request, allowLegitimate bool) bool {
-	userAgent := strings.ToLower(r.UserAgent())
-
-	// 空 User-Agent 通常是可疑的
-	if userAgent == "" {
-		return true
-	}
-
-	// 如果允许合法爬虫，先检查是否是合法爬虫
-	if allowLegitimate {
-		for _, pattern := range legitimateBotPatterns {
-			if strings.Contains(userAgent, pattern) {
-				return false // 是合法爬虫，不拦截
-			}
-		}
-	}
-
-	// 检查是否匹配常见机器人特征
-	for _, pattern := range commonBotPatterns {
-		if strings.Contains(userAgent, pattern) {
-			return true
-		}
-	}
-
-	return false
+	return IsBotUserAgent(r.UserAgent(), allowLegitimate)
 }
 
 // IsBotUserAgent 直接检测 User-Agent 字符串是否为机器人
-// allowLegitimate 为 true 时允许合法的搜索引擎爬虫
+// allowLegitimate 为 true 时允许合法的搜索引擎爬虫；空 User-Agent 视为机器人
 func IsBotUserAgent(userAgent string, allowLegitimate bool) bool {
 	ua := strings.ToLower(userAgent)
 
@@ -94,10 +76,13 @@ func IsBotUserAgent(userAgent string, allowLegitimate bool) bool {
 		return true
 	}
 
+	patternsMu.RLock()
+	defer patternsMu.RUnlock()
+
 	if allowLegitimate {
 		for _, pattern := range legitimateBotPatterns {
 			if strings.Contains(ua, pattern) {
-				return false
+				return false // 是合法爬虫，不拦截
 			}
 		}
 	}
@@ -132,13 +117,18 @@ func BlockBotMiddleware(allowLegitimate bool, customMessage ...string) func(http
 }
 
 // AddCustomBotPattern 添加自定义的机器人特征
-// 返回的函数可用于移除该特征
+// 返回的函数可用于移除该特征；添加与移除均可与检测函数并发调用
 func AddCustomBotPattern(pattern string) func() {
 	pattern = strings.ToLower(pattern)
+
+	patternsMu.Lock()
 	commonBotPatterns = append(commonBotPatterns, pattern)
+	patternsMu.Unlock()
 
 	// 返回移除函数
 	return func() {
+		patternsMu.Lock()
+		defer patternsMu.Unlock()
 		for i, p := range commonBotPatterns {
 			if p == pattern {
 				commonBotPatterns = append(commonBotPatterns[:i], commonBotPatterns[i+1:]...)
@@ -149,11 +139,17 @@ func AddCustomBotPattern(pattern string) func() {
 }
 
 // AddLegitimateBot 添加自定义的合法爬虫特征
+// 返回的函数可用于移除该特征；添加与移除均可与检测函数并发调用
 func AddLegitimateBot(pattern string) func() {
 	pattern = strings.ToLower(pattern)
+
+	patternsMu.Lock()
 	legitimateBotPatterns = append(legitimateBotPatterns, pattern)
+	patternsMu.Unlock()
 
 	return func() {
+		patternsMu.Lock()
+		defer patternsMu.Unlock()
 		for i, p := range legitimateBotPatterns {
 			if p == pattern {
 				legitimateBotPatterns = append(legitimateBotPatterns[:i], legitimateBotPatterns[i+1:]...)
@@ -165,6 +161,8 @@ func AddLegitimateBot(pattern string) func() {
 
 // GetBotPatterns 获取当前的机器人特征列表（副本）
 func GetBotPatterns() []string {
+	patternsMu.RLock()
+	defer patternsMu.RUnlock()
 	patterns := make([]string, len(commonBotPatterns))
 	copy(patterns, commonBotPatterns)
 	return patterns
@@ -172,6 +170,8 @@ func GetBotPatterns() []string {
 
 // GetLegitimatePatterns 获取当前的合法爬虫特征列表（副本）
 func GetLegitimatePatterns() []string {
+	patternsMu.RLock()
+	defer patternsMu.RUnlock()
 	patterns := make([]string, len(legitimateBotPatterns))
 	copy(patterns, legitimateBotPatterns)
 	return patterns
