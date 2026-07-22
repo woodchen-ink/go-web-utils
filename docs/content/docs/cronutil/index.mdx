@@ -1,0 +1,65 @@
+---
+title: 定时任务工具 (cronutil)
+description: 空轮指数退避、单实例防重叠、去抖聚合队列
+---
+
+# cronutil
+
+定时任务与后台作业的三个性能防护组件。高频 tick 任务、批处理循环、批量写外部系统是单核 CPU 被打满的高发点，三个组件分别对应三条防护规则。
+
+## IdleBackoff — 空轮指数退避
+
+"每秒 tick → 扫描待办"型任务在待办清空后仍每 tick 全量扫描会空转打满 CPU。退避判断放在**查库之前**，仍在退避窗口内的 tick 直接返回。
+
+```go
+var backoff = cronutil.NewIdleBackoff(2*time.Second, time.Minute) // 2s 起步, 封顶 60s
+
+func tick() {
+    if !backoff.ShouldRun() {
+        return // 退避窗口内, 不查库也不写状态
+    }
+    items := loadPending()
+    if len(items) == 0 {
+        backoff.Miss() // 空轮: 退避间隔翻倍
+        return
+    }
+    backoff.Hit() // 有活干: 清零退避, 恢复高频
+    process(items)
+}
+
+// 管理员手动触发时绕过退避
+backoff.Reset()
+```
+
+## TickGuard — 单实例防重叠
+
+单轮 tick 耗时可能超过触发间隔。上一轮未返回时下一轮直接**跳过**（不排队），避免并发重叠扫描同一批待办。零值即可用，`fn` panic 时闸门也会正确释放。
+
+```go
+var guard cronutil.TickGuard
+
+func tick() {
+    if !guard.TryRun(processRound) {
+        log.Println("上一轮未结束, 本轮跳过")
+    }
+}
+```
+
+## Debounced — 去抖聚合队列
+
+批量写外部索引/搜索引擎/webhook 时，攒到阈值条数或时间窗先到者刷一次，把"每批一提交"合并为"跨批攒一提交"。刷新回调串行执行，不会并发。
+
+```go
+// 2000 条或 30s 先到者触发
+queue := cronutil.NewDebounced(2000, 30*time.Second, func(docs []Doc) {
+    searchEngine.AddDocuments(docs) // 一次批量提交
+})
+
+// 采集/回灌/元数据管道全部走队列
+queue.Add(doc)
+
+// 优雅退出时刷新剩余
+queue.Close()
+```
+
+**重启兜底**：内存队列重启会丢，需配合定期全量/增量同步保证最终一致。即时直发仅限管理员手动的低频单条操作。

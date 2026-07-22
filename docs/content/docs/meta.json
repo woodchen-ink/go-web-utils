@@ -3,6 +3,11 @@
   "pages": [
     "index",
     "iputil",
-    "uautil"
+    "uautil",
+    "resputil",
+    "timex",
+    "cookieutil",
+    "cronutil",
+    "nextstatic"
   ]
-} 
+}

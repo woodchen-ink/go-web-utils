@@ -1,0 +1,64 @@
+---
+title: TrustedProxies
+description: 可信代理模式，防请求头伪造的客户端 IP 提取
+---
+
+# TrustedProxies
+
+`GetClientIP` 读取的所有代理头都可以被直连客户端伪造。`TrustedProxies` 提供带信任边界校验的提取方式：只有当请求的直连来源 (`RemoteAddr`) 落在可信网段内时才信任代理头，否则直接返回直连 IP。**鉴权、限流、封禁等安全决策场景应使用本 API**，日志展示场景用 `GetClientIP` 即可。
+
+## 函数签名
+
+```go
+func NewTrustedProxies(cidrs ...string) (*TrustedProxies, error)
+func (tp *TrustedProxies) ClientIP(r *http.Request) string
+func (tp *TrustedProxies) Contains(ip string) bool
+
+func IsIPInCIDRs(ip string, cidrs []string) bool
+func IsIPv4(ip string) bool
+func IsIPv6(ip string) bool
+```
+
+## 基本用法
+
+```go
+// 启动时构建一次: 条目支持 CIDR 或单个 IP (自动按 /32、/128 处理)
+tp, err := iputil.NewTrustedProxies(
+    "10.0.0.0/8",      // 内网负载均衡
+    "173.245.48.0/20", // Cloudflare 网段 (示例, 完整列表见 CF 官方)
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+func rateLimitMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // 不可信来源伪造的 CF-Connecting-IP / X-Forwarded-For 会被忽略
+        clientIP := tp.ClientIP(r)
+        if exceeded(clientIP) {
+            http.Error(w, "请求过于频繁", http.StatusTooManyRequests)
+            return
+        }
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+## 行为说明
+
+| 直连来源 | 行为 |
+|----------|------|
+| 在可信网段内 | 按 `GetClientIP` 的完整优先级解析代理头 |
+| 不在可信网段 | 忽略所有代理头，直接返回直连 IP |
+
+## 辅助函数
+
+```go
+iputil.IsIPInCIDRs("10.1.2.3", []string{"10.0.0.0/8"}) // true; 一次性判断, 高频场景用 NewTrustedProxies 预编译
+iputil.IsIPv4("192.168.1.1")  // true
+iputil.IsIPv6("2001:db8::1")  // true
+```
+
+## 相关函数
+
+- [GetClientIP](./get-client-ip) - 无信任校验的完整优先级提取（日志/展示场景）

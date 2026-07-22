@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "get-client-ip",
+    "trusted-proxies",
     "is-valid-ip"
   ]
-} 
+}

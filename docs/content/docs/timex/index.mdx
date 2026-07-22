@@ -1,0 +1,46 @@
+---
+title: 时区工具 (timex)
+description: 业务时区显式初始化与自然日/周/月边界计算
+---
+
+# timex
+
+Go 程序在容器内默认时区为 UTC，依赖运行环境的 `time.Local` 会导致"在我机器上是对的"问题。timex 要求在程序入口**显式初始化业务时区**，之后全项目通过 `Loc()` / `Now()` 使用统一时区。
+
+## 函数签名
+
+```go
+func Init(name string) error
+func MustInit(name string)
+func Loc() *time.Location
+func Now() time.Time
+func In(t time.Time) time.Time
+func StartOfDay(t time.Time) time.Time
+func StartOfWeek(t time.Time) time.Time   // 周一为一周起点
+func StartOfMonth(t time.Time) time.Time
+func FormatRFC3339(t time.Time) string
+func ParseRFC3339(s string) (time.Time, error)
+```
+
+## 基本用法
+
+```go
+func main() {
+    timex.MustInit("Asia/Shanghai") // 加载失败直接 panic, 不静默回退 UTC
+    // ...
+}
+
+// 业务代码: 今日统计边界
+todayStart := timex.StartOfDay(timex.Now())
+weekStart := timex.StartOfWeek(timex.Now())
+
+// 接口出口: RFC3339 带时区偏移
+resp.CreatedAt = timex.FormatRFC3339(order.CreatedAt) // "2026-07-22T18:30:00+08:00"
+```
+
+## 约定
+
+- **未初始化即 panic**：`Loc()` 在 `Init`/`MustInit` 之前调用会 panic，强制暴露初始化遗漏而不是静默用错时区
+- **存储统一 UTC**：数据库时间字段一律以 UTC 存储，仅在接口出口用本包换算展示时区
+- **接口契约 RFC3339**：`ParseRFC3339` 拒绝省略时区的裸时间字符串
+- Docker 镜像需带 tzdata（alpine: `apk add --no-cache tzdata`），否则 `LoadLocation` 找不到时区数据库

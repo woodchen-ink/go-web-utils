@@ -28,6 +28,18 @@ For complete documentation, visit: https://go-web-utils.czl.net/
 - 🚀 **High Performance**: Zero dependencies, pure standard library implementation
 - 🛡️ **Production Ready**: Complete test coverage and documentation
 
+### Packages
+
+| Package | Description |
+|---------|-------------|
+| `iputil` | Real client IP extraction (major CDNs/proxies), trusted proxy mode, IP validation and CIDR matching |
+| `uautil` | Bot/crawler detection and blocking, browser detection, HTTP middleware |
+| `resputil` | Unified JSON response `{ code, data, msg }`, empty data never serialized as null |
+| `timex` | Explicit business timezone initialization, day/week/month boundaries, RFC3339 formatting |
+| `cookieutil` | Auth cookies with safe defaults (HttpOnly enforced), CSRF double-submit tokens |
+| `cronutil` | Idle exponential backoff gate, non-overlapping tick guard, debounced flush queue |
+| `nextstatic` | Next.js static export hosting: RSC headers, dynamic route fallback, SEO injection |
+
 ## 📦 Installation
 
 ```bash

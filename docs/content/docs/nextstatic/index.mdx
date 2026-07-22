@@ -1,0 +1,56 @@
+---
+title: Next.js 静态托管 (nextstatic)
+description: Next.js export 产物托管，RSC 头处理、动态路由回退、SEO 注入
+---
+
+# nextstatic
+
+Next.js 静态导出（`output: 'export'`）产物的 Go 托管处理器。由 Go 统一提供 `/api` 与静态页面时需要正确处理一组容易踩坑的细节，本包收敛为一个开箱即用的 `http.Handler`。
+
+## 解决的问题
+
+| 坑 | 处理 |
+|----|------|
+| RSC payload `.txt` 走默认 `text/plain` | 设为 `text/x-component; charset=utf-8`，否则 Next.js 16 客户端路由回退硬导航，页面出现一片 RSC 文本 |
+| CDN 把 HTML 与 RSC 缓存串台 | RSC 响应带 `Vary: RSC, Next-Router-State-Tree, Next-Router-Prefetch` |
+| `robots.txt` 被误判为 RSC | 按文件名特征区分，普通 `.txt` 保持 `text/plain` |
+| 静态资源缓存策略 | `/_next/static` 长期缓存 + `immutable`；HTML 与 RSC 走协商缓存 |
+| `trailingSlash: true` 刷新 404 | 无扩展名页面请求先 308 补斜杠再查目录 `index.html` |
+| 动态路由直达 404 | `/voddetail/123/` 回退占位符目录 `/voddetail/_/index.html`，RSC 数据文件同样回退 |
+| 动态 SEO | `SEOInject` 钩子在 HTML 写出前注入 `__SEO_*__` 占位符内容 |
+
+## 使用
+
+```go
+h, err := nextstatic.New(nextstatic.Config{
+    Root:          "./web/out",
+    TrailingSlash: true, // 与 next.config 对齐
+    SEOInject: func(r *http.Request, html []byte) []byte {
+        return seo.Render(r.URL.Path, html) // 注入内容须自行 HTML 转义
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
+
+mux := http.NewServeMux()
+mux.Handle("/api/", apiRouter)
+mux.Handle("/", h) // 兜底路由: 其余请求全部交给静态托管
+```
+
+## 解析顺序
+
+直接静态文件 → RSC 占位符回退 → trailing slash 规范化 → 目录 `index.html` → 动态路由占位符 HTML → 根首页回退 → 404
+
+sitemap、旧链接重定向等特殊路由应在外层路由先行匹配，再落到本 Handler。
+
+## 独立工具函数
+
+不用完整 Handler 时可单独使用：
+
+```go
+nextstatic.IsRSCPayload("/about/__next._index.txt") // true
+nextstatic.IsRSCPayload("/robots.txt")              // false
+
+nextstatic.SetHeaders(w, urlPath) // 按路径分类设 Content-Type/Vary/缓存头
+```

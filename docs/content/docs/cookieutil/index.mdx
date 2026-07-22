@@ -1,0 +1,74 @@
+---
+title: Cookie 工具 (cookieutil)
+description: 带安全默认值的认证 Cookie 与 CSRF double-submit 防护
+---
+
+# cookieutil
+
+带安全默认值的认证 Cookie 下发与 CSRF 防护，配套 Cookie 登录认证方案（禁止 localStorage 存凭证）。
+
+安全基线：
+
+- 认证 Cookie **强制 HttpOnly**（调用方无法关闭），防 XSS 窃取
+- 默认 `Path=/`、`SameSite=Lax`；生产环境应设置 `Secure: true`
+- CSRF 采用 double-submit：随机 token 同时写入可读 Cookie 与请求头，服务端恒定时间比较
+
+## 函数签名
+
+```go
+type Options struct {
+    Domain   string
+    Path     string        // 默认 "/"
+    Secure   bool          // 生产必须 true
+    SameSite http.SameSite // 默认 Lax
+    MaxAge   time.Duration // <=0 为会话 Cookie
+}
+
+func SetAuth(w http.ResponseWriter, name, value string, opts Options)
+func Clear(w http.ResponseWriter, name string, opts Options)
+
+func NewCSRFToken() (string, error)
+func SetCSRF(w http.ResponseWriter, token string, opts Options)
+func ValidateCSRF(r *http.Request) bool
+func ValidateCSRFNames(r *http.Request, cookieName, headerName string) bool
+```
+
+## 登录下发
+
+```go
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+    sid := createSession(user)
+    opts := cookieutil.Options{Secure: true, MaxAge: 7 * 24 * time.Hour}
+
+    cookieutil.SetAuth(w, "session_id", sid, opts) // HttpOnly 强制开启
+
+    token, _ := cookieutil.NewCSRFToken()
+    cookieutil.SetCSRF(w, token, opts) // 特意可读, 前端取出放请求头
+
+    resputil.OK(w, nil)
+}
+```
+
+## 写操作校验 CSRF
+
+```go
+func csrfMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodGet && r.Method != http.MethodHead {
+            if !cookieutil.ValidateCSRF(r) { // Cookie csrf_token vs 请求头 X-CSRF-Token
+                resputil.FailStatus(w, 403, 40300, "CSRF 校验失败")
+                return
+            }
+        }
+        next.ServeHTTP(w, r)
+    })
+}
+```
+
+前端配合：读取 `csrf_token` Cookie，写操作请求带 `X-CSRF-Token` 请求头。
+
+## 登出清除
+
+```go
+cookieutil.Clear(w, "session_id", opts) // Domain/Path 须与下发时一致
+```

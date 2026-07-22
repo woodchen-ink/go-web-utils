@@ -28,6 +28,18 @@
 - 🚀 **高性能**: 零依赖，纯标准库实现
 - 🛡️ **生产就绪**: 完整的测试覆盖和文档
 
+### 包一览
+
+| 包 | 功能 |
+|----|------|
+| `iputil` | 客户端真实 IP 提取 (主流 CDN/代理)、可信代理模式、IP 校验与 CIDR 匹配 |
+| `uautil` | 机器人/爬虫检测与拦截、浏览器检测、HTTP 中间件 |
+| `resputil` | 统一 JSON 响应 `{ code, data, msg }`，空数据永不返回 null |
+| `timex` | 业务时区显式初始化、自然日/周/月边界、RFC3339 格式化 |
+| `cookieutil` | 安全默认值的认证 Cookie (强制 HttpOnly)、CSRF double-submit |
+| `cronutil` | 定时任务空轮指数退避、单实例防重叠、去抖聚合队列 |
+| `nextstatic` | Next.js 静态导出托管：RSC 头处理、动态路由回退、SEO 注入 |
+
 ## 📦 安装
 
 ```bash

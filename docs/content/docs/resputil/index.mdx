@@ -1,0 +1,59 @@
+---
+title: 统一响应 (resputil)
+description: 统一 JSON 接口响应封装，空数据永不返回 null
+---
+
+# resputil
+
+统一的 JSON 接口响应封装，响应结构固定为：
+
+```json
+{ "code": 200, "data": {}, "msg": "success" }
+```
+
+- `code`: 业务状态码，`200` 表示成功，与 HTTP 状态解耦
+- `data`: 业务数据；空数据自动归一化为 `{}` 或 `[]`，**永不输出 null**
+- `msg`: 提示信息
+
+## 函数签名
+
+```go
+func OK(w http.ResponseWriter, data any)
+func OKMsg(w http.ResponseWriter, data any, msg string)
+func Fail(w http.ResponseWriter, code int, msg string)
+func FailStatus(w http.ResponseWriter, httpStatus, code int, msg string)
+func Write(w http.ResponseWriter, httpStatus int, resp Response)
+```
+
+## 基本用法
+
+```go
+func getUserHandler(w http.ResponseWriter, r *http.Request) {
+    user, err := loadUser(r)
+    if errors.Is(err, ErrNotFound) {
+        resputil.Fail(w, 40401, "用户不存在") // HTTP 200 + 业务码
+        return
+    }
+    if err != nil {
+        resputil.FailStatus(w, 500, 50000, "内部错误") // 自定义 HTTP 状态
+        return
+    }
+    resputil.OK(w, user)
+}
+```
+
+## 空值归一化
+
+前端无需判空防御 null：
+
+| 传入 data | 输出 |
+|-----------|------|
+| `nil` | `{}` |
+| nil slice (`[]T(nil)`) | `[]` |
+| nil map | `{}` |
+| nil 指针 | `{}` |
+| 非空值 | 原样序列化 |
+
+## 何时用 FailStatus
+
+需要网关或前端拦截器按 HTTP 状态统一处理的场景（未登录 401、无权限 403、限流 429）用 `FailStatus`；普通业务失败保持 HTTP 200 + 业务码，用 `Fail`。
