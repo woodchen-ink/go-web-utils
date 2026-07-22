@@ -49,10 +49,10 @@ var commonBotPatterns = []string{
 var legitimateBotPatterns = []string{
 	"googlebot",
 	"bingbot",
-	"slurp",           // Yahoo
-	"duckduckbot",     // DuckDuckGo
-	"baiduspider",     // Baidu
-	"yandexbot",       // Yandex
+	"slurp",       // Yahoo
+	"duckduckbot", // DuckDuckGo
+	"baiduspider", // Baidu
+	"yandexbot",   // Yandex
 	"facebookexternalhit",
 	"twitterbot",
 	"linkedinbot",

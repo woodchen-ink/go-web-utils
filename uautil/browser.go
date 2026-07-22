@@ -12,9 +12,9 @@ var browserPatterns = []string{
 	"safari/",
 	"firefox/",
 	"edge/",
-	"edg/",     // Edge Chromium
+	"edg/", // Edge Chromium
 	"opera/",
-	"opr/",     // Opera Chromium
+	"opr/", // Opera Chromium
 	"brave/",
 	"vivaldi/",
 }
