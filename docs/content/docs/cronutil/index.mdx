@@ -52,7 +52,9 @@ func tick() {
 ```go
 // 2000 条或 30s 先到者触发
 queue := cronutil.NewDebounced(2000, 30*time.Second, func(docs []Doc) {
-    searchEngine.AddDocuments(docs) // 一次批量提交
+    if err := searchEngine.AddDocuments(docs); err != nil {
+        queue.Add(docs...) // 回调内回灌重试是安全的, 不会死锁
+    }
 })
 
 // 采集/回灌/元数据管道全部走队列
@@ -61,5 +63,11 @@ queue.Add(doc)
 // 优雅退出时刷新剩余
 queue.Close()
 ```
+
+行为保证：
+
+- 刷新回调**串行执行**且批次间保持 **FIFO 顺序**（先入队的批先交付）
+- 回调内可安全调用本实例的 `Add`/`Flush`/`Close`（失败回灌重试场景），不会死锁
+- 回调 panic 会被捕获并丢弃该批（时间窗刷新跑在定时器协程，未捕获 panic 会击穿进程）；业务错误与重试在回调内自行处理
 
 **重启兜底**：内存队列重启会丢，需配合定期全量/增量同步保证最终一致。即时直发仅限管理员手动的低频单条操作。

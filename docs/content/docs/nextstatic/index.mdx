@@ -1,22 +1,26 @@
 ---
 title: Next.js 静态托管 (nextstatic)
-description: Next.js export 产物托管，RSC 头处理、动态路由回退、SEO 注入
+description: Next.js 15/16 export 产物托管，RSC 头处理、动态路由回退、SEO 注入
 ---
 
 # nextstatic
 
-Next.js 静态导出（`output: 'export'`）产物的 Go 托管处理器。由 Go 统一提供 `/api` 与静态页面时需要正确处理一组容易踩坑的细节，本包收敛为一个开箱即用的 `http.Handler`。
+Next.js 静态导出（`output: 'export'`）产物的 Go 托管处理器，兼容 Next.js 15 与 16 两代导出结构。由 Go 统一提供 `/api` 与静态页面时需要正确处理一组容易踩坑的细节，本包收敛为一个开箱即用的 `http.Handler`。
 
 ## 解决的问题
 
 | 坑 | 处理 |
 |----|------|
-| RSC payload `.txt` 走默认 `text/plain` | 设为 `text/x-component; charset=utf-8`，否则 Next.js 16 客户端路由回退硬导航，页面出现一片 RSC 文本 |
+| RSC payload `.txt` 走默认 `text/plain` | 设为 `text/x-component; charset=utf-8`，否则 Next.js 16 客户端路由回退硬导航，页面出现一片 RSC 文本；Next 15 的每目录 `index.txt` 同样处理 |
 | CDN 把 HTML 与 RSC 缓存串台 | RSC 响应带 `Vary: RSC, Next-Router-State-Tree, Next-Router-Prefetch` |
 | `robots.txt` 被误判为 RSC | 按文件名特征区分，普通 `.txt` 保持 `text/plain` |
-| 静态资源缓存策略 | `/_next/static` 长期缓存 + `immutable`；HTML 与 RSC 走协商缓存 |
-| `trailingSlash: true` 刷新 404 | 无扩展名页面请求先 308 补斜杠再查目录 `index.html` |
-| 动态路由直达 404 | `/voddetail/123/` 回退占位符目录 `/voddetail/_/index.html`，RSC 数据文件同样回退 |
+| Next 16 route group 点号路径 404 | `/admin/users/__next.!<b64>.admin.users.__PAGE__.txt` 自动还原为磁盘目录结构查找 |
+| CDN 缓存旧 HTML 引用已覆盖的 chunk | HTML 用硬化 `no-store, no-cache, must-revalidate, max-age=0`；`/_next/static` 长期缓存 + `immutable` |
+| `trailingSlash: true` 刷新 404 | 无扩展名页面请求先 308 补斜杠（Location 强制相对路径，防开放重定向） |
+| 动态路由直达 404 | `/voddetail/123/` 回退占位符目录 `/voddetail/_/index.html`；RSC 数据文件同路回退；另支持"动态详情导出在父级"形态（`/app/123/` → `/app/index.html`）的逐级父目录回退 |
+| 未命中兜底根首页造成软 404 + RSC fetch 死循环 | 默认返回 `404.html` + 404 状态码；纯 SPA 项目显式开 `SPAFallback` 恢复"根 index + 200" |
+| 未注册 API 路径被页面兜底吞掉 | 命中 `APIPrefixes`（默认 `/api/`）直接返回 JSON 404 |
+| index.html 被浏览器当 Service Worker 注册 | `/sw.js` 强制 `no-cache` + `Service-Worker-Allowed: /`，缺失时硬 404 绝不回退 HTML |
 | 动态 SEO | `SEOInject` 钩子在 HTML 写出前注入 `__SEO_*__` 占位符内容 |
 
 ## 使用
@@ -28,6 +32,8 @@ h, err := nextstatic.New(nextstatic.Config{
     SEOInject: func(r *http.Request, html []byte) []byte {
         return seo.Render(r.URL.Path, html) // 注入内容须自行 HTML 转义
     },
+    // APIPrefixes: 默认 ["/api/"]; 传空 slice 关闭
+    // SPAFallback: 纯 SPA 项目 (无 SSG 动态页) 设 true
 })
 if err != nil {
     log.Fatal(err)
@@ -35,18 +41,21 @@ if err != nil {
 
 mux := http.NewServeMux()
 mux.Handle("/api/", apiRouter)
-mux.Handle("/", h) // 兜底路由: 其余请求全部交给静态托管
+mux.Handle("/", h) // 兜底路由
 ```
 
 ## 解析顺序
 
-直接静态文件 → RSC 占位符回退 → trailing slash 规范化 → 目录 `index.html` → 动态路由占位符 HTML → 根首页回退 → 404
+API 前缀 JSON 404 → 直接静态文件 → RSC 点号路径还原 → RSC 占位符/父目录回退 → trailing slash 308 → 目录 `index.html` → `<path>.html` → 动态路由占位符 → 逐级父目录 `index.html` → `404.html`（或 SPA 兜底）
 
 sitemap、旧链接重定向等特殊路由应在外层路由先行匹配，再落到本 Handler。
 
-## 独立工具函数
+## 限制
 
-不用完整 Handler 时可单独使用：
+- 动态段占位符回退只处理单级动态段（最后一级目录替换为 `_`）；多级嵌套动态段在外层路由先行改写
+- HTML 模板每次请求读盘；高 QPS 的 SEO 注入场景建议在 `SEOInject` 上层自行缓存模板
+
+## 独立工具函数
 
 ```go
 nextstatic.IsRSCPayload("/about/__next._index.txt") // true
