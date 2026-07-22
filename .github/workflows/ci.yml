@@ -20,11 +20,13 @@ jobs:
       matrix:
         go: ['1.24.x', 'stable']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
+          # 零依赖仓库没有 go.sum,关闭模块缓存避免告警
+          cache: false
 
       - name: gofmt check
         run: |
