@@ -34,6 +34,10 @@ For complete documentation, visit: https://go-web-utils.czl.net/
 go get github.com/woodchen-ink/go-web-utils
 ```
 
+## 🔒 Security Notice
+
+All proxy/CDN headers read by `iputil.GetClientIP` (`CF-Connecting-IP`, `X-Forwarded-For`, etc.) can be forged by directly-connected clients. The result is safe for logging and display; for security decisions (authentication, rate limiting, banning), the service MUST sit behind a trusted proxy/CDN that overwrites — not passes through — these headers.
+
 ## 🔗 Links
 
 - [💻 GitHub Repository](https://github.com/woodchen-ink/go-web-utils) - Source code and issue feedback

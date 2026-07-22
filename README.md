@@ -34,6 +34,9 @@
 go get github.com/woodchen-ink/go-web-utils
 ```
 
+## 🔒 安全提示
+
+`iputil.GetClientIP` 读取的所有代理/CDN 请求头（`CF-Connecting-IP`、`X-Forwarded-For` 等）都可以被直连客户端伪造。结果用于日志、展示是安全的；用于鉴权、限流、封禁等安全决策时，服务必须部署在可信代理/CDN 之后，且代理层会覆盖（而非透传）这些请求头。
 
 ## 🔗 相关链接
 

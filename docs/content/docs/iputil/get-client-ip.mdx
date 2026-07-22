@@ -28,9 +28,18 @@ func GetClientIP(r *http.Request) string
 | 优先级 | HTTP 头 | 使用场景 |
 |--------|---------|----------|
 | 1 | `CF-Connecting-IP` | Cloudflare CDN |
-| 2 | `X-Real-IP` | Nginx 反向代理 |
-| 3 | `X-Forwarded-For` | 标准代理链 |
-| 4 | `RemoteAddr` | 直连访问 |
+| 2 | `EO-Client-IP` | 腾讯云 EdgeOne |
+| 3 | `Ali-CDN-Real-IP` | 阿里云 CDN |
+| 4 | `X-HW-Real-IP` | 华为云 CDN |
+| 5 | `Baidu-Real-IP` | 百度云 CDN |
+| 6 | `X-Qiniu-CDN-Real-IP` | 七牛云 CDN |
+| 7 | `Cdn-Real-Ip` | 网宿 CDN |
+| 8 | `Fastly-Client-IP` | Fastly CDN |
+| 9 | `CloudFront-Viewer-Address` | AWS CloudFront（自动去除端口，兼容 IPv4/IPv6） |
+| 10 | `X-Azure-ClientIP` | Azure Front Door |
+| 11 | `X-Real-IP` | Nginx 反向代理 |
+| 12 | `X-Forwarded-For` | 标准代理链（取第一个 IP） |
+| 13 | `RemoteAddr` | 直连访问（自动去除端口） |
 
 
 ## 基本用法
@@ -177,6 +186,8 @@ RemoteAddr: 203.0.113.45:54321
 ```
 
 ## 安全注意事项
+
+**信任边界**：以上所有请求头都可以被直连客户端伪造。`GetClientIP` 的结果用于日志记录、数据展示是安全的；但用于鉴权、限流、封禁等安全决策时，服务必须部署在可信代理/CDN 之后，并由代理层覆盖（而非透传）这些请求头，否则攻击者可以伪造任意 IP。
 
 ### 1. 头部伪造风险
 
