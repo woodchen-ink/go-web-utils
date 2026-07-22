@@ -1,0 +1,4 @@
+# Go 源文件统一 LF,避免 Windows 检出 CRLF 导致 gofmt 误报
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
