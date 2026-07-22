@@ -152,6 +152,70 @@ func TestDebouncedClose(t *testing.T) {
 	}
 }
 
+func TestDebouncedReentrantAddInFlush(t *testing.T) {
+	var mu sync.Mutex
+	var flushed [][]int
+	retried := false
+
+	var d *Debounced[int]
+	d = NewDebounced(2, time.Hour, func(items []int) {
+		mu.Lock()
+		flushed = append(flushed, items)
+		mu.Unlock()
+		// 模拟失败回灌: 首批在回调内重入 Add, 不允许死锁
+		if !retried {
+			retried = true
+			d.Add(items...)
+		}
+	})
+
+	done := make(chan struct{})
+	go func() {
+		d.Add(1, 2) // 达阈值触发刷新, 回调内回灌 1,2 再次达阈值
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("回调内重入 Add 导致死锁")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(flushed) != 2 {
+		t.Errorf("应刷新两批 (原批+回灌批), got %d", len(flushed))
+	}
+}
+
+func TestDebouncedFIFOOrder(t *testing.T) {
+	var mu sync.Mutex
+	var order []int
+
+	d := NewDebounced(1, time.Hour, func(items []int) {
+		mu.Lock()
+		order = append(order, items[0])
+		mu.Unlock()
+	})
+
+	// 单 goroutine 顺序 Add, 批次必须按入队顺序交付
+	for i := 0; i < 50; i++ {
+		d.Add(i)
+	}
+	d.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(order) != 50 {
+		t.Fatalf("批次数 = %d, expected 50", len(order))
+	}
+	for i, v := range order {
+		if v != i {
+			t.Fatalf("批次乱序: 位置 %d 收到 %d", i, v)
+		}
+	}
+}
+
 func TestDebouncedConcurrentAdd(t *testing.T) {
 	var count atomic.Int64
 	d := NewDebounced(10, 10*time.Millisecond, func(items []int) {

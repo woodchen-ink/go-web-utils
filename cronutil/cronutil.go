@@ -117,17 +117,22 @@ func (g *TickGuard) TryRun(fn func()) bool {
 }
 
 // Debounced 去抖聚合队列: 攒到阈值条数或时间窗口先到者触发一次批量刷新。
-// 即时直发仅限低频单条场景; 采集/回灌/批量管道应走本队列
+// 即时直发仅限低频单条场景; 采集/回灌/批量管道应走本队列。
+//
+// 刷新回调串行执行且批次间保持 FIFO 顺序; 回调内可安全调用本实例的
+// Add/Flush/Close (如失败回灌重试), 不会死锁 —— 重入产生的批次会在当前
+// 批回调返回后继续被同一轮 drain 处理
 type Debounced[T any] struct {
 	mu        sync.Mutex
-	buf       []T
+	buf       []T   // 未成批的缓冲
+	pending   [][]T // 已成批待刷新的 FIFO 队列
 	threshold int
 	window    time.Duration
 	flushFn   func([]T)
 	timer     *time.Timer
 	closed    bool
 
-	flushMu sync.Mutex // 串行化 flush 回调, 保证不并发执行
+	draining atomic.Bool // 同一时刻只有一个 goroutine 执行 drain, 保证回调串行且 FIFO
 }
 
 // NewDebounced 创建去抖队列; threshold 为触发刷新的条数阈值,
@@ -142,67 +147,94 @@ func NewDebounced[T any](threshold int, window time.Duration, flush func([]T)) *
 	return &Debounced[T]{threshold: threshold, window: window, flushFn: flush}
 }
 
-// Add 追加待刷新条目; 达到阈值立即触发刷新, 否则等待时间窗。
-// Close 之后调用会立即同步刷新该批条目 (退化为直发), 不丢数据
+// Add 追加待刷新条目; 达到阈值立即成批, 否则等待时间窗。
+// Close 之后调用同样入队并立即触发刷新, 不丢数据
 func (d *Debounced[T]) Add(items ...T) {
 	if len(items) == 0 {
 		return
 	}
 
 	d.mu.Lock()
-	if d.closed {
-		d.mu.Unlock()
-		d.doFlush(items)
-		return
-	}
 	d.buf = append(d.buf, items...)
-	if len(d.buf) >= d.threshold {
-		batch := d.takeLocked()
-		d.mu.Unlock()
-		d.doFlush(batch)
-		return
-	}
-	// 首条入队时启动时间窗定时器
-	if d.timer == nil {
+	if d.closed || len(d.buf) >= d.threshold {
+		d.enqueueLocked()
+	} else if d.timer == nil {
+		// 首条入队时启动时间窗定时器
 		d.timer = time.AfterFunc(d.window, d.Flush)
 	}
 	d.mu.Unlock()
+
+	d.drain()
 }
 
-// Flush 立即刷新当前缓冲区 (无论是否达到阈值); 缓冲为空时是空操作
+// Flush 立即把当前缓冲成批并触发刷新 (无论是否达到阈值); 缓冲为空时是空操作
 func (d *Debounced[T]) Flush() {
 	d.mu.Lock()
-	batch := d.takeLocked()
+	d.enqueueLocked()
 	d.mu.Unlock()
-	d.doFlush(batch)
+	d.drain()
 }
 
-// Close 关闭队列并刷新剩余条目; 之后的 Add 退化为同步直发
+// Close 关闭队列并刷新剩余条目; 之后的 Add 入队即刷 (退化为直发)。
+// 在刷新回调内调用 Close 也安全: 剩余批次由外层 drain 循环继续处理
 func (d *Debounced[T]) Close() {
 	d.mu.Lock()
 	d.closed = true
-	batch := d.takeLocked()
+	d.enqueueLocked()
 	d.mu.Unlock()
-	d.doFlush(batch)
+	d.drain()
 }
 
-// takeLocked 取走缓冲区并停掉时间窗定时器; 调用方必须持有 d.mu
-func (d *Debounced[T]) takeLocked() []T {
-	batch := d.buf
-	d.buf = nil
+// enqueueLocked 把缓冲区成批推入待刷队列并停掉时间窗定时器;
+// 调用方必须持有 d.mu
+func (d *Debounced[T]) enqueueLocked() {
+	if len(d.buf) > 0 {
+		d.pending = append(d.pending, d.buf)
+		d.buf = nil
+	}
 	if d.timer != nil {
 		d.timer.Stop()
 		d.timer = nil
 	}
-	return batch
 }
 
-// doFlush 串行执行刷新回调
-func (d *Debounced[T]) doFlush(batch []T) {
-	if len(batch) == 0 || d.flushFn == nil {
+// drain 抢占唯一刷新权后按 FIFO 逐批执行回调; 抢占失败直接返回,
+// 在刷的 goroutine 会通过收尾复查接手新入队的批次, 不会有批次滞留。
+// 回调 panic 会被捕获并丢弃该批 —— 时间窗触发的刷新运行在定时器协程,
+// 未捕获的 panic 会击穿整个进程; 业务错误与重试应在回调内自行处理
+func (d *Debounced[T]) drain() {
+	if d.flushFn == nil {
 		return
 	}
-	d.flushMu.Lock()
-	defer d.flushMu.Unlock()
+	for {
+		if !d.draining.CompareAndSwap(false, true) {
+			return // 已有 goroutine 在刷, 由它接手
+		}
+		for {
+			d.mu.Lock()
+			if len(d.pending) == 0 {
+				d.mu.Unlock()
+				break
+			}
+			batch := d.pending[0]
+			d.pending = d.pending[1:]
+			d.mu.Unlock()
+			d.safeFlush(batch)
+		}
+		d.draining.Store(false)
+
+		// 收尾复查: 释放刷新权与新批入队存在竞窗, 有新批则重新抢占
+		d.mu.Lock()
+		empty := len(d.pending) == 0
+		d.mu.Unlock()
+		if empty {
+			return
+		}
+	}
+}
+
+// safeFlush 执行单批回调并捕获 panic
+func (d *Debounced[T]) safeFlush(batch []T) {
+	defer func() { _ = recover() }()
 	d.flushFn(batch)
 }
