@@ -7,18 +7,39 @@ import (
 	"strings"
 )
 
-// TrustedProxies 表示一组可信代理网段, 用于带信任边界校验的客户端 IP 提取。
-// 只有当请求的直连来源 (RemoteAddr) 落在可信网段内时, 才信任代理转发头;
-// 否则视为客户端直连, 直接使用 RemoteAddr, 防止请求头伪造。
+// TrustedProxies 表示"可信代理网段 + 该边缘设置的客户端 IP 头"的组合,
+// 用于带信任边界校验的客户端 IP 提取, 供鉴权、限流、封禁等安全决策场景使用
+// (仅做日志展示用 GetClientIP 即可)。
+//
+// 构造时必须显式声明部署边缘会强制覆盖的客户端 IP 头 (如 Cloudflare 的
+// CF-Connecting-IP、腾讯云 EdgeOne 的 EO-Client-IP、自建 nginx 明确 set 的
+// X-Real-IP)。不做"来源可信就信任所有厂商头"的宽松模式 —— 代理/CDN 会透传
+// 客户端伪造的其它厂商头, 例如服务挂在 EdgeOne 后时, 客户端伪造的
+// CF-Connecting-IP 会原样到达服务端。
 type TrustedProxies struct {
 	nets []*net.IPNet
+	// header 部署边缘强制覆盖的客户端 IP 头; 为 X-Forwarded-For 时
+	// 按"从右往左取第一个不可信 IP"算法解析
+	header string
+	// headerIsXFF 预判定 header 是否为 X-Forwarded-For, 避免每请求比较
+	headerIsXFF bool
 }
 
-// NewTrustedProxies 由 CIDR 列表构建可信代理集合
-// 条目支持 CIDR (如 "10.0.0.0/8") 或单个 IP (自动按 /32、/128 处理);
+// NewTrustedProxies 构建可信代理集合。
+// trustedHeader 为部署边缘会强制覆盖的客户端 IP 头, 不能为空;
+// cidrs 支持 CIDR (如 "10.0.0.0/8") 或单个 IP (自动按 /32、/128 处理),
 // 任一条目非法时返回错误, 不静默跳过
-func NewTrustedProxies(cidrs ...string) (*TrustedProxies, error) {
-	tp := &TrustedProxies{nets: make([]*net.IPNet, 0, len(cidrs))}
+func NewTrustedProxies(trustedHeader string, cidrs ...string) (*TrustedProxies, error) {
+	trustedHeader = strings.TrimSpace(trustedHeader)
+	if trustedHeader == "" {
+		return nil, fmt.Errorf("iputil: trustedHeader is required (e.g. \"CF-Connecting-IP\", \"X-Forwarded-For\")")
+	}
+
+	tp := &TrustedProxies{
+		nets:        make([]*net.IPNet, 0, len(cidrs)),
+		header:      trustedHeader,
+		headerIsXFF: strings.EqualFold(trustedHeader, "X-Forwarded-For"),
+	}
 	for _, c := range cidrs {
 		c = strings.TrimSpace(c)
 		if c == "" {
@@ -42,6 +63,10 @@ func NewTrustedProxies(cidrs ...string) (*TrustedProxies, error) {
 		}
 		tp.nets = append(tp.nets, ipNet)
 	}
+	if len(tp.nets) == 0 {
+		// 空网段集合会让可信头永远不生效, 是"以为配置了却没配置"的静默陷阱
+		return nil, fmt.Errorf("iputil: at least one trusted CIDR is required")
+	}
 	return tp, nil
 }
 
@@ -60,13 +85,56 @@ func (tp *TrustedProxies) Contains(ip string) bool {
 }
 
 // ClientIP 带信任边界校验地获取客户端真实 IP:
-// 直连来源在可信网段内时按 GetClientIP 的完整优先级解析代理头,
-// 否则忽略所有代理头直接返回直连 IP。
-// 适用于鉴权、限流、封禁等安全决策场景; 仅做日志展示用 GetClientIP 即可
+//   - 直连来源不在可信网段: 忽略一切转发头, 返回直连 IP
+//   - 可信头为 X-Forwarded-For: 从右往左跳过可信网段条目, 返回第一个
+//     不可信的合法 IP; 链上全部可信时返回最左侧合法 IP (内部设施互调),
+//     无合法条目时返回直连 IP
+//   - 其它可信头: 返回该头的值 (自动去除附带端口), 缺失时返回直连 IP
 func (tp *TrustedProxies) ClientIP(r *http.Request) string {
 	remoteIP := remoteAddrIP(r)
-	if tp.Contains(remoteIP) {
-		return GetClientIP(r)
+	if !tp.Contains(remoteIP) {
+		return remoteIP
+	}
+
+	if tp.headerIsXFF {
+		return tp.clientIPFromXFF(r, remoteIP)
+	}
+
+	if v := strings.TrimSpace(r.Header.Get(tp.header)); v != "" {
+		// 头值必须是合法 IP; 边缘漏配导致客户端伪造值透传时,
+		// 不把任意字符串放进安全决策链路
+		if host := stripViewerAddressPort(v); net.ParseIP(host) != nil {
+			return host
+		}
+	}
+	return remoteIP
+}
+
+// clientIPFromXFF 按"从右往左取第一个不可信 IP"算法解析 X-Forwarded-For;
+// 右侧条目由可信代理逐跳追加, 不可被客户端伪造
+func (tp *TrustedProxies) clientIPFromXFF(r *http.Request, remoteIP string) string {
+	// 合并全部 X-Forwarded-For 头为一条链
+	var chain []string
+	for _, h := range r.Header.Values("X-Forwarded-For") {
+		for _, part := range strings.Split(h, ",") {
+			if p := strings.TrimSpace(part); p != "" {
+				chain = append(chain, p)
+			}
+		}
+	}
+
+	leftmostValid := ""
+	for i := len(chain) - 1; i >= 0; i-- {
+		if net.ParseIP(chain[i]) == nil {
+			continue // 非法条目跳过, 不作为结果
+		}
+		leftmostValid = chain[i]
+		if !tp.Contains(chain[i]) {
+			return chain[i]
+		}
+	}
+	if leftmostValid != "" {
+		return leftmostValid
 	}
 	return remoteIP
 }
