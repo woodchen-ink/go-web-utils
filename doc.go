@@ -42,4 +42,4 @@ User-Agent 工具 (uautil 包):
 
 更多信息请参见各个子包的文档。
 */
-package main
+package gowebutils
