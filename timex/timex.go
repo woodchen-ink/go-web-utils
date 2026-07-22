@@ -68,8 +68,9 @@ func In(t time.Time) time.Time {
 
 // StartOfDay 返回 t 所在自然日的起点 (业务时区 00:00:00)
 func StartOfDay(t time.Time) time.Time {
-	t = t.In(Loc())
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, Loc())
+	loc := Loc() // 只读一次, 避免运行期切换时区时换算与构造使用不同 Location
+	t = t.In(loc)
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
 }
 
 // StartOfWeek 返回 t 所在自然周的起点 (业务时区周一 00:00:00)
@@ -84,8 +85,9 @@ func StartOfWeek(t time.Time) time.Time {
 
 // StartOfMonth 返回 t 所在自然月的起点 (业务时区 1 号 00:00:00)
 func StartOfMonth(t time.Time) time.Time {
-	t = t.In(Loc())
-	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, Loc())
+	loc := Loc()
+	t = t.In(loc)
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, loc)
 }
 
 // FormatRFC3339 按业务时区输出 RFC3339 字符串, 用于对外接口的时间字段

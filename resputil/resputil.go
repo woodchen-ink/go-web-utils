@@ -58,8 +58,12 @@ func FailStatus(w http.ResponseWriter, httpStatus, code int, msg string) {
 }
 
 // Write 按统一结构输出 JSON 响应, 自动把空 data 归一化为空对象/空数组;
-// 序列化失败时降级输出 HTTP 500 纯文本
+// 序列化失败时降级输出 HTTP 500 纯文本; 非法或 informational 状态码
+// 矫正为 500, 避免 WriteHeader panic 或 1xx 语义破坏 JSON 响应体
 func Write(w http.ResponseWriter, httpStatus int, resp Response) {
+	if httpStatus < 200 || httpStatus > 999 {
+		httpStatus = http.StatusInternalServerError
+	}
 	resp.Data = normalizeData(resp.Data)
 
 	body, err := json.Marshal(resp)
@@ -77,7 +81,9 @@ func Write(w http.ResponseWriter, httpStatus int, resp Response) {
 var emptyObject = map[string]any{}
 
 // normalizeData 把会序列化为 null 的空值替换为空对象/空数组:
-// nil、nil 指针、nil map 替换为 {}; nil slice 替换为 []
+// nil、nil 指针、nil map 替换为 {}; nil slice 替换为 [];
+// 非 nil 指针解引用后递归归一化 (覆盖 `&list` 且 list 为 nil slice 的
+// 常见 GORM 查询写法)
 func normalizeData(data any) any {
 	if data == nil {
 		return emptyObject
@@ -92,10 +98,11 @@ func normalizeData(data any) any {
 		if v.IsNil() {
 			return emptyObject
 		}
-	case reflect.Ptr, reflect.Interface:
+	case reflect.Ptr:
 		if v.IsNil() {
 			return emptyObject
 		}
+		return normalizeData(v.Elem().Interface())
 	}
 	return data
 }
