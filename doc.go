@@ -61,5 +61,8 @@ Next.js 静态托管 (nextstatic 包):
 	}
 
 更多信息请参见各个子包的文档。
+
+完整文档站: https://go-web-utils.czl.net/
+各包文档: https://go-web-utils.czl.net/docs/<包名> (如 /docs/iputil, /docs/nextstatic)
 */
 package gowebutils

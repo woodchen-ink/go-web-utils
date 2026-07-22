@@ -16,6 +16,8 @@ Package resputil 提供统一的 JSON 接口响应封装。
 		}
 		resputil.OK(w, user)
 	}
+
+完整文档: https://go-web-utils.czl.net/docs/resputil
 */
 package resputil
 

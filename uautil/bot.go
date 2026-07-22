@@ -1,4 +1,6 @@
 // Package uautil provides utilities for User-Agent detection and filtering.
+//
+// 完整文档: https://go-web-utils.czl.net/docs/uautil
 package uautil
 
 import (

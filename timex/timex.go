@@ -16,6 +16,8 @@ Go 程序在容器内默认时区为 UTC, 依赖运行环境的 time.Local 会�
 	today := timex.StartOfDay(timex.Now())
 
 存储层约定: 数据库时间字段一律以 UTC 存储, 仅在接口出口用本包换算展示时区。
+
+完整文档: https://go-web-utils.czl.net/docs/timex
 */
 package timex
 

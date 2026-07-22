@@ -41,6 +41,11 @@ Package nextstatic 提供 Next.js 静态导出产物 (output: 'export') 的 Go �
 限制: 动态段占位符回退只处理单级动态段 (最后一级目录替换为 _); 多级嵌套
 动态段等更复杂映射应在外层路由先行改写。HTML 模板每次请求读盘, 高 QPS 的
 SEO 注入场景建议在 SEOInject 上层自行缓存模板。
+
+Gin 集成: 返回值是标准 http.Handler, 用 gin.WrapH 挂到 r.NoRoute 即可;
+API 路由与动态 sitemap 等特殊路由正常注册, 优先于 NoRoute 匹配。
+
+完整文档: https://go-web-utils.czl.net/docs/nextstatic
 */
 package nextstatic
 

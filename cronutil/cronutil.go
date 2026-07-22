@@ -31,6 +31,8 @@ Package cronutil 提供定时任务与后台作业的三个性能防护组件。
 	})
 
 内存队列重启会丢数据, 使用 Debounced 时需配合定期全量/增量同步兜底。
+
+完整文档: https://go-web-utils.czl.net/docs/cronutil
 */
 package cronutil
 

@@ -53,6 +53,8 @@ GetClientIP 函数按以下优先级获取客户端 IP:
 数据展示是安全的; 但用于鉴权、限流、封禁等安全决策时, 服务必须部署在
 可信代理/CDN 之后, 并由代理层覆盖 (而非透传) 这些请求头, 否则攻击者
 可以通过伪造请求头冒充任意 IP。
+
+完整文档: https://go-web-utils.czl.net/docs/iputil
 */
 package iputil
 

@@ -21,6 +21,8 @@ Package cookieutil 提供带安全默认值的认证 Cookie 与 CSRF 防护工�
 		resputil.FailStatus(w, 403, 40300, "CSRF 校验失败")
 		return
 	}
+
+完整文档: https://go-web-utils.czl.net/docs/cookieutil
 */
 package cookieutil
 

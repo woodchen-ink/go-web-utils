@@ -44,6 +44,23 @@ mux.Handle("/api/", apiRouter)
 mux.Handle("/", h) // 兜底路由
 ```
 
+## Gin 集成
+
+返回值是标准 `http.Handler`,Gin 用 `gin.WrapH` 挂到 `NoRoute`:
+
+```go
+r := gin.Default()
+r.GET("/api/users", listUsers) // API 路由正常注册, 优先匹配
+r.GET("/sitemap.xml", genSitemap) // 动态 sitemap 等特殊路由在外层先挂
+r.NoRoute(gin.WrapH(h)) // 其余请求全部交给静态托管
+```
+
+配合细节:
+
+- 已注册的 `/api` 路由不进 NoRoute;**未注册**的 `/api/*` 落进 NoRoute 后由 `APIPrefixes` 返回 JSON 404,不会被页面兜底吞掉,无需再手写这段防护
+- Gin 的 `RedirectTrailingSlash` 只对已注册路由生效,NoRoute 请求的补斜杠由本包的 308 处理,两者不冲突
+- `r.Use(...)` 挂载的日志、限流、机器人拦截等中间件照常在 NoRoute 之前执行
+
 ## 解析顺序
 
 API 前缀 JSON 404 → 直接静态文件 → RSC 点号路径还原 → RSC 占位符/父目录回退 → trailing slash 308 → 目录 `index.html` → `<path>.html` → 动态路由占位符 → 逐级父目录 `index.html` → `404.html`（或 SPA 兜底）
