@@ -266,8 +266,11 @@ func (h *Handler) serveHTML(w http.ResponseWriter, r *http.Request, fullPath str
 	_, _ = w.Write(body)
 }
 
-// notFoundAsset 资源类未命中: 自定义 NotFound 或纯 404, 不回退 HTML
+// notFoundAsset 资源类未命中: 自定义 NotFound 或纯 404, 不回退 HTML;
+// 带 no-store, 避免 CDN (如 Cloudflare) 缓存 404, 部署切换期间新资源还未就绪时
+// 被缓存的 404 会在切换完成后继续生效
 func (h *Handler) notFoundAsset(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if h.cfg.NotFound != nil {
 		h.cfg.NotFound.ServeHTTP(w, r)
 		return
