@@ -19,7 +19,8 @@ import (
 type TrustedProxies struct {
 	nets []*net.IPNet
 	// header 部署边缘强制覆盖的客户端 IP 头; 为 X-Forwarded-For 时
-	// 按"从右往左取第一个不可信 IP"算法解析
+	// 按"从右往左取第一个不可信 IP"算法解析。构造时已规范化, 可直接索引
+	// http.Header
 	header string
 	// headerIsXFF 预判定 header 是否为 X-Forwarded-For, 避免每请求比较
 	headerIsXFF bool
@@ -37,7 +38,7 @@ func NewTrustedProxies(trustedHeader string, cidrs ...string) (*TrustedProxies, 
 
 	tp := &TrustedProxies{
 		nets:        make([]*net.IPNet, 0, len(cidrs)),
-		header:      trustedHeader,
+		header:      http.CanonicalHeaderKey(trustedHeader),
 		headerIsXFF: strings.EqualFold(trustedHeader, "X-Forwarded-For"),
 	}
 	for _, c := range cidrs {
@@ -100,7 +101,7 @@ func (tp *TrustedProxies) ClientIP(r *http.Request) string {
 		return tp.clientIPFromXFF(r, remoteIP)
 	}
 
-	if v := strings.TrimSpace(r.Header.Get(tp.header)); v != "" {
+	if v := strings.TrimSpace(headerValue(r.Header, tp.header)); v != "" {
 		// 头值必须是合法 IP; 边缘漏配导致客户端伪造值透传时,
 		// 不把任意字符串放进安全决策链路
 		if host := stripViewerAddressPort(v); net.ParseIP(host) != nil {

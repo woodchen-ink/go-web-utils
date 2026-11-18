@@ -245,3 +245,17 @@ func TestIsIPv4IsIPv6(t *testing.T) {
 		}
 	}
 }
+
+func TestTrustedProxiesHeaderNameCaseInsensitive(t *testing.T) {
+	// 构造时传任意大小写的头名, 都应命中 net/http 规范化后的请求头
+	for _, name := range []string{"cf-connecting-ip", "CF-CONNECTING-IP", "Cf-Connecting-Ip"} {
+		tp, err := NewTrustedProxies(name, "10.0.0.0/8")
+		if err != nil {
+			t.Fatalf("NewTrustedProxies(%q): %v", name, err)
+		}
+		r := newRequest("10.0.0.1:1234", map[string]string{"CF-Connecting-IP": "8.8.8.8"})
+		if got := tp.ClientIP(r); got != "8.8.8.8" {
+			t.Errorf("trustedHeader=%q: ClientIP = %q, expected 8.8.8.8", name, got)
+		}
+	}
+}

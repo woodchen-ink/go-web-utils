@@ -64,74 +64,58 @@ import (
 	"strings"
 )
 
+// clientIPHeader GetClientIP 依次尝试的请求头
+type clientIPHeader struct {
+	// key 规范化后的头名, 直接索引 http.Header, 省掉 Header.Get 每次调用
+	// 对非规范写法 (如 CF-Connecting-IP) 的重新规范化与分配
+	key string
+	// stripPort 头值是否附带端口 (CloudFront-Viewer-Address 为 "IP:port")
+	stripPort bool
+}
+
+// clientIPHeaders 按优先级排列的单值客户端 IP 头; X-Forwarded-For 与
+// RemoteAddr 排在其后, 由 GetClientIP 单独处理
+var clientIPHeaders = []clientIPHeader{
+	{key: http.CanonicalHeaderKey("CF-Connecting-IP")},                           // Cloudflare
+	{key: http.CanonicalHeaderKey("EO-Client-IP")},                               // 腾讯云 EdgeOne
+	{key: http.CanonicalHeaderKey("Ali-CDN-Real-IP")},                            // 阿里云 CDN
+	{key: http.CanonicalHeaderKey("X-HW-Real-IP")},                               // 华为云 CDN
+	{key: http.CanonicalHeaderKey("Baidu-Real-IP")},                              // 百度云 CDN
+	{key: http.CanonicalHeaderKey("X-Qiniu-CDN-Real-IP")},                        // 七牛云 CDN
+	{key: http.CanonicalHeaderKey("Cdn-Real-Ip")},                                // 网宿 CDN
+	{key: http.CanonicalHeaderKey("Fastly-Client-IP")},                           // Fastly CDN
+	{key: http.CanonicalHeaderKey("CloudFront-Viewer-Address"), stripPort: true}, // AWS CloudFront
+	{key: http.CanonicalHeaderKey("X-Azure-ClientIP")},                           // Azure Front Door
+	{key: http.CanonicalHeaderKey("X-Real-IP")},                                  // Nginx 等通用代理
+}
+
+// headerValue 按已规范化的头名取首个值, 等价于 Header.Get 但不做规范化
+func headerValue(h http.Header, canonicalKey string) string {
+	if v := h[canonicalKey]; len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}
+
 // GetClientIP 获取客户端真实IP地址
 // 支持多种CDN和代理场景，按优先级获取真实IP
 //
 // 安全提示: 所有请求头均可被直连客户端伪造, 结果用于安全决策 (鉴权/限流/封禁)
 // 时必须确保服务部署在可信代理之后且代理层会覆盖这些头, 详见包文档
 func GetClientIP(r *http.Request) string {
-	// 优先级1: Cloudflare
-	if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
-		return ip
-	}
-
-	// 优先级2: 腾讯云EdgeOne
-	if ip := r.Header.Get("EO-Client-IP"); ip != "" {
-		return ip
-	}
-
-	// 优先级3: 阿里云CDN
-	if ip := r.Header.Get("Ali-CDN-Real-IP"); ip != "" {
-		return ip
-	}
-
-	// 优先级4: 华为云CDN
-	if ip := r.Header.Get("X-HW-Real-IP"); ip != "" {
-		return ip
-	}
-
-	// 优先级5: 百度云CDN
-	if ip := r.Header.Get("Baidu-Real-IP"); ip != "" {
-		return ip
-	}
-
-	// 优先级6: 七牛云CDN
-	if ip := r.Header.Get("X-Qiniu-CDN-Real-IP"); ip != "" {
-		return ip
-	}
-
-	// 优先级7: 网宿CDN
-	if ip := r.Header.Get("Cdn-Real-Ip"); ip != "" {
-		return ip
-	}
-
-	// 优先级8: Fastly CDN
-	if ip := r.Header.Get("Fastly-Client-IP"); ip != "" {
-		return ip
-	}
-
-	// 优先级9: AWS CloudFront
-	if ip := r.Header.Get("CloudFront-Viewer-Address"); ip != "" {
-		return stripViewerAddressPort(ip)
-	}
-
-	// 优先级10: Azure Front Door
-	if ip := r.Header.Get("X-Azure-ClientIP"); ip != "" {
-		return ip
-	}
-
-	// 优先级11: 通用真实IP头
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-
-	// 优先级12: 标准代理链
-	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		// 取第一个IP（原始客户端IP）
-		ips := strings.Split(ip, ",")
-		if len(ips) > 0 {
-			return strings.TrimSpace(ips[0])
+	for _, h := range clientIPHeaders {
+		if ip := headerValue(r.Header, h.key); ip != "" {
+			if h.stripPort {
+				return stripViewerAddressPort(ip)
+			}
+			return ip
 		}
+	}
+
+	// 标准代理链: 取第一个IP（原始客户端IP）
+	if xff := headerValue(r.Header, "X-Forwarded-For"); xff != "" {
+		first, _, _ := strings.Cut(xff, ",")
+		return strings.TrimSpace(first)
 	}
 
 	// 兜底：直连IP（需要去掉端口号）
