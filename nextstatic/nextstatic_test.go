@@ -413,3 +413,124 @@ func TestIsRSCPayload(t *testing.T) {
 		}
 	}
 }
+
+func TestRSCShortCache(t *testing.T) {
+	h := newTestHandler(t, Config{Root: buildExportTree(t), TrailingSlash: true})
+
+	rec := get(h, "/about/__next._index.txt")
+	if cc := rec.Header().Get("Cache-Control"); cc != rscCacheControl {
+		t.Errorf("RSC Cache-Control = %q, expected %q", cc, rscCacheControl)
+	}
+}
+
+// writeExportFile 在导出目录内写入文件, 模拟运行期发布新产物
+func writeExportFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	full := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSnapshotNeedsReload(t *testing.T) {
+	root := buildExportTree(t)
+	h := newTestHandler(t, Config{Root: root, TrailingSlash: true})
+
+	// 预热 HTML 缓存
+	if rec := get(h, "/about/"); !strings.Contains(rec.Body.String(), "about") {
+		t.Fatalf("预热失败: %d %s", rec.Code, rec.Body.String())
+	}
+
+	writeExportFile(t, root, "new/index.html", "<html>new-page</html>")
+	writeExportFile(t, root, "about/index.html", "<html>changed</html>")
+	writeExportFile(t, root, "fresh.js", "console.log(2)")
+
+	// 未 Reload: 新文件不可见, 已缓存的 HTML 保持旧内容
+	if rec := get(h, "/new/"); rec.Code != 404 {
+		t.Errorf("Reload 前新页面应 404, got %d", rec.Code)
+	}
+	if rec := get(h, "/fresh.js"); rec.Code != 404 {
+		t.Errorf("Reload 前新资源应 404, got %d", rec.Code)
+	}
+	if rec := get(h, "/about/"); !strings.Contains(rec.Body.String(), "about") {
+		t.Errorf("Reload 前应返回缓存的旧 HTML, got %s", rec.Body.String())
+	}
+
+	if err := h.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	if rec := get(h, "/new/"); rec.Code != 200 || !strings.Contains(rec.Body.String(), "new-page") {
+		t.Errorf("Reload 后新页面应可访问, got %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := get(h, "/fresh.js"); rec.Code != 200 {
+		t.Errorf("Reload 后新资源应可访问, got %d", rec.Code)
+	}
+	if rec := get(h, "/about/"); !strings.Contains(rec.Body.String(), "changed") {
+		t.Errorf("Reload 后应返回新 HTML, got %s", rec.Body.String())
+	}
+}
+
+func TestDisableCacheReadsDisk(t *testing.T) {
+	root := buildExportTree(t)
+	h := newTestHandler(t, Config{Root: root, TrailingSlash: true, DisableCache: true})
+
+	get(h, "/about/")
+	writeExportFile(t, root, "new/index.html", "<html>new-page</html>")
+	writeExportFile(t, root, "about/index.html", "<html>changed</html>")
+
+	if rec := get(h, "/new/"); rec.Code != 200 || !strings.Contains(rec.Body.String(), "new-page") {
+		t.Errorf("DisableCache 应立即看到新页面, got %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := get(h, "/about/"); !strings.Contains(rec.Body.String(), "changed") {
+		t.Errorf("DisableCache 应立即看到新 HTML, got %s", rec.Body.String())
+	}
+}
+
+func TestHTMLCacheLimit(t *testing.T) {
+	tests := []struct {
+		name       string
+		maxBytes   int64
+		wantCached bool
+	}{
+		{name: "默认上限内入缓存", maxBytes: 0, wantCached: true},
+		{name: "超过上限不入缓存", maxBytes: 4, wantCached: false},
+		{name: "负值关闭HTML缓存", maxBytes: -1, wantCached: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := buildExportTree(t)
+			h := newTestHandler(t, Config{Root: root, TrailingSlash: true, HTMLCacheMaxBytes: tt.maxBytes})
+
+			get(h, "/about/")
+			writeExportFile(t, root, "about/index.html", "<html>changed</html>")
+
+			cached := !strings.Contains(get(h, "/about/").Body.String(), "changed")
+			if cached != tt.wantCached {
+				t.Errorf("cached = %v, expected %v", cached, tt.wantCached)
+			}
+		})
+	}
+}
+
+func TestSEOInjectAppendKeepsCacheIntact(t *testing.T) {
+	root := buildExportTree(t)
+	n := 0
+	h := newTestHandler(t, Config{
+		Root:          root,
+		TrailingSlash: true,
+		SEOInject: func(r *http.Request, html []byte) []byte {
+			n++
+			return append(html, []byte("<!--"+strings.Repeat("x", n)+"-->")...)
+		},
+	})
+
+	first := get(h, "/about/").Body.String()
+	second := get(h, "/about/").Body.String()
+	if first != "<html>about</html><!--x-->" || second != "<html>about</html><!--xx-->" {
+		t.Errorf("钩子 append 污染了缓存: first=%q second=%q", first, second)
+	}
+}

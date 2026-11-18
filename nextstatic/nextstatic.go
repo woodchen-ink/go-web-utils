@@ -17,7 +17,8 @@ Package nextstatic 提供 Next.js 静态导出产物 (output: 'export') 的 Go �
     RSC 数据文件同路回退; 另支持"逐级父目录 index.html"形态的动态详情页
   - trailingSlash: true 时无扩展名页面请求先 308 补斜杠
   - 带 hash 的 /_next/static 资源长期缓存 + immutable; HTML 用硬化的 no-store
-    (防 CDN 缓存旧 HTML 引用已被覆盖的 chunk); sw.js 强制 no-cache 且缺失时
+    (防 CDN 缓存旧 HTML 引用已被覆盖的 chunk); RSC .txt 短缓存
+    (max-age=60, stale-while-revalidate=300); sw.js 强制 no-cache 且缺失时
     绝不回退 HTML (防浏览器把 index.html 当 Service Worker 注册)
   - 未命中处理防软 404: 带扩展名的资源请求直接 404; 页面请求默认返回
     404.html (带 404 状态码), 不默认兜底根首页 —— 兜底首页会让 Next 客户端
@@ -38,9 +39,14 @@ Package nextstatic 提供 Next.js 静态导出产物 (output: 'export') 的 Go �
 	// 挂为兜底路由: 先匹配 /api 与 sitemap 等特殊路由, 其余全部交给 h
 	mux.Handle("/", h)
 
+缓存: New 时遍历一次导出目录建立文件索引, 之后路径解析只查内存, 未命中请求
+不产生磁盘 stat; HTML 首次读盘后留在内存 (总量上限 HTMLCacheMaxBytes)。
+代价是运行期替换导出目录不会自动生效 —— 发布新产物后重启进程或调用
+Handler.Reload; 本地开发边构建边看效果时设 DisableCache。
+索引区分大小写 (与 Linux 一致), 不展开符号链接目录。
+
 限制: 动态段占位符回退只处理单级动态段 (最后一级目录替换为 _); 多级嵌套
-动态段等更复杂映射应在外层路由先行改写。HTML 模板每次请求读盘, 高 QPS 的
-SEO 注入场景建议在 SEOInject 上层自行缓存模板。
+动态段等更复杂映射应在外层路由先行改写。
 
 Gin 集成: 返回值是标准 http.Handler, 用 gin.WrapH 挂到 r.NoRoute 即可;
 API 路由与动态 sitemap 等特殊路由正常注册, 优先于 NoRoute 匹配。
@@ -56,10 +62,15 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
 
 // rscVary RSC payload 响应必须携带的 Vary 头, 防止 CDN 把 HTML 与 RSC 缓存串台
 const rscVary = "RSC, Next-Router-State-Tree, Next-Router-Prefetch"
+
+// rscCacheControl RSC payload 的短缓存策略; 文件名不带 hash, 发版后最多
+// max-age + stale-while-revalidate 的时间内可能拿到旧 payload
+const rscCacheControl = "public, max-age=60, stale-while-revalidate=300"
 
 // htmlNoStore HTML 响应的硬化禁缓存头; 普通 no-cache 会被部分 CDN
 // (如 Cloudflare 默认规则) 忽略, 导致旧 HTML 引用已被覆盖的 chunk
@@ -73,7 +84,9 @@ type Config struct {
 	// 开启后无扩展名页面请求会先 308 补斜杠
 	TrailingSlash bool
 	// SEOInject 可选的 HTML 注入钩子, 在写出 HTML 前调用 (含动态路由占位模板
-	// 与 404 页); 注入内容必须自行完成 HTML 转义
+	// 与 404 页); 注入内容必须自行完成 HTML 转义。
+	// 入参 html 是所有请求共享的缓存, 禁止原地改写其中的字节, 必须返回新切片
+	// (bytes.Replace / bytes.ReplaceAll / append 均满足)
 	SEOInject func(r *http.Request, html []byte) []byte
 	// APIPrefixes 命中这些前缀且未被外层路由处理的请求返回 JSON 404,
 	// 不落页面兜底; 零值默认 ["/api/"], 显式传空 slice 可关闭
@@ -84,11 +97,19 @@ type Config struct {
 	// NotFound 可选的 404 处理器; 设置后未命中请求 (含资源与页面) 全部交给它,
 	// 替代默认的 404.html 逻辑
 	NotFound http.Handler
+	// DisableCache 关闭文件索引与 HTML 缓存, 每次请求读盘; 用于本地开发时
+	// 前端反复重新构建的场景, 生产环境保持 false
+	DisableCache bool
+	// HTMLCacheMaxBytes HTML 内存缓存的总量上限; 零值默认 64MB, 负值关闭
+	// HTML 缓存 (文件索引仍生效)。达到上限后新页面每次读盘, 不做淘汰
+	HTMLCacheMaxBytes int64
 }
 
 // Handler Next.js 静态导出托管处理器, 实现 http.Handler
 type Handler struct {
 	cfg Config
+	// snap 导出目录快照; DisableCache 时恒为 nil
+	snap atomic.Pointer[snapshot]
 }
 
 // New 创建托管处理器; Root 不存在或不是目录时返回错误
@@ -103,7 +124,48 @@ func New(cfg Config) (*Handler, error) {
 	if cfg.APIPrefixes == nil {
 		cfg.APIPrefixes = []string{"/api/"}
 	}
-	return &Handler{cfg: cfg}, nil
+	h := &Handler{cfg: cfg}
+	if err := h.Reload(); err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+// Reload 重新遍历导出目录, 整体替换文件索引并清空 HTML 缓存; 运行期替换了
+// 导出产物后调用。可与请求处理并发调用, 失败时保留旧快照。
+// DisableCache 模式下是空操作
+func (h *Handler) Reload() error {
+	if h.cfg.DisableCache {
+		return nil
+	}
+	s, err := buildSnapshot(h.cfg.Root, h.cfg.HTMLCacheMaxBytes)
+	if err != nil {
+		return err
+	}
+	h.snap.Store(s)
+	return nil
+}
+
+// fullPath 把相对导出根的斜杠路径换成磁盘路径
+func (h *Handler) fullPath(fsPath string) string {
+	return filepath.Join(h.cfg.Root, filepath.FromSlash(fsPath))
+}
+
+// exists 判断导出产物中是否存在该文件 (相对导出根、以 "/" 开头的斜杠路径)
+func (h *Handler) exists(fsPath string) bool {
+	if s := h.snap.Load(); s != nil {
+		_, ok := s.files[fsPath]
+		return ok
+	}
+	return fileExists(h.fullPath(fsPath))
+}
+
+// readHTML 读取 HTML 文件内容, 有快照时走内存缓存
+func (h *Handler) readHTML(fsPath string) ([]byte, error) {
+	if s := h.snap.Load(); s != nil {
+		return s.readHTML(fsPath, h.fullPath(fsPath))
+	}
+	return os.ReadFile(h.fullPath(fsPath))
 }
 
 // ServeHTTP 解析顺序: API 前缀 JSON 404 → 直接静态文件 → RSC 点号路径还原 →
@@ -135,7 +197,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if p == "/" {
-		h.serveHTML(w, r, filepath.Join(h.cfg.Root, "index.html"), http.StatusOK)
+		h.serveHTML(w, r, "/index.html", http.StatusOK)
 		return
 	}
 
@@ -228,28 +290,27 @@ func (h *Handler) servePage(w http.ResponseWriter, r *http.Request, p string) {
 // tryServeFile 尝试按静态文件伺服 fsPath (相对导出根的斜杠路径);
 // headerPath 用于响应头分类 (保持为原始请求路径)。命中返回 true
 func (h *Handler) tryServeFile(w http.ResponseWriter, r *http.Request, fsPath, headerPath string) bool {
-	full := filepath.Join(h.cfg.Root, filepath.FromSlash(fsPath))
-	if !fileExists(full) {
+	if !h.exists(fsPath) {
 		return false
 	}
 	SetHeaders(w, headerPath)
-	http.ServeFile(w, r, full)
+	http.ServeFile(w, r, h.fullPath(fsPath))
 	return true
 }
 
 // tryServeHTML 尝试伺服 HTML 页面 (相对导出根的斜杠路径), 命中返回 true
 func (h *Handler) tryServeHTML(w http.ResponseWriter, r *http.Request, fsPath string) bool {
-	full := filepath.Join(h.cfg.Root, filepath.FromSlash(fsPath))
-	if !fileExists(full) {
+	if !h.exists(fsPath) {
 		return false
 	}
-	h.serveHTML(w, r, full, http.StatusOK)
+	h.serveHTML(w, r, fsPath, http.StatusOK)
 	return true
 }
 
-// serveHTML 输出 HTML 页面, 应用 SEOInject 钩子与硬化禁缓存策略
-func (h *Handler) serveHTML(w http.ResponseWriter, r *http.Request, fullPath string, status int) {
-	body, err := os.ReadFile(fullPath)
+// serveHTML 输出 HTML 页面 (相对导出根的斜杠路径), 应用 SEOInject 钩子与
+// 硬化禁缓存策略
+func (h *Handler) serveHTML(w http.ResponseWriter, r *http.Request, fsPath string, status int) {
+	body, err := h.readHTML(fsPath)
 	if err != nil {
 		h.notFoundAsset(w, r)
 		return
@@ -286,16 +347,16 @@ func (h *Handler) notFoundPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rootIndex := filepath.Join(h.cfg.Root, "index.html")
-	if h.cfg.SPAFallback && fileExists(rootIndex) {
+	const rootIndex = "/index.html"
+	if h.cfg.SPAFallback && h.exists(rootIndex) {
 		h.serveHTML(w, r, rootIndex, http.StatusOK)
 		return
 	}
-	if nf := filepath.Join(h.cfg.Root, "404.html"); fileExists(nf) {
-		h.serveHTML(w, r, nf, http.StatusNotFound)
+	if h.exists("/404.html") {
+		h.serveHTML(w, r, "/404.html", http.StatusNotFound)
 		return
 	}
-	if fileExists(rootIndex) {
+	if h.exists(rootIndex) {
 		h.serveHTML(w, r, rootIndex, http.StatusNotFound)
 		return
 	}
@@ -327,7 +388,8 @@ func SetHeaders(w http.ResponseWriter, urlPath string) {
 	case IsRSCPayload(lower):
 		w.Header().Set("Content-Type", "text/x-component; charset=utf-8")
 		w.Header().Set("Vary", rscVary)
-		w.Header().Set("Cache-Control", "no-cache")
+		// 短缓存: <Link> 预取很密, 避免每次都回源做条件请求; 不用 immutable
+		w.Header().Set("Cache-Control", rscCacheControl)
 	case lower == "/sw.js":
 		// Service Worker 必须实时更新, 且作用域头允许挂根
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
@@ -413,10 +475,4 @@ func hasAnySuffix(s string, suffixes ...string) bool {
 		}
 	}
 	return false
-}
-
-// fileExists 判断路径存在且为普通文件
-func fileExists(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && !info.IsDir()
 }

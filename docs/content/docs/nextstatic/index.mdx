@@ -12,7 +12,7 @@ Next.js 静态导出（`output: 'export'`）产物的 Go 托管处理器，兼�
 | 坑 | 处理 |
 |----|------|
 | RSC payload `.txt` 走默认 `text/plain` | 设为 `text/x-component; charset=utf-8`，否则 Next.js 16 客户端路由回退硬导航，页面出现一片 RSC 文本；Next 15 的每目录 `index.txt` 同样处理 |
-| CDN 把 HTML 与 RSC 缓存串台 | RSC 响应带 `Vary: RSC, Next-Router-State-Tree, Next-Router-Prefetch` |
+| CDN 把 HTML 与 RSC 缓存串台 | RSC 响应带 `Vary: RSC, Next-Router-State-Tree, Next-Router-Prefetch`；缓存头为 `public, max-age=60, stale-while-revalidate=300` |
 | `robots.txt` 被误判为 RSC | 按文件名特征区分，普通 `.txt` 保持 `text/plain` |
 | Next 16 route group 点号路径 404 | `/admin/users/__next.!<b64>.admin.users.__PAGE__.txt` 自动还原为磁盘目录结构查找 |
 | CDN 缓存旧 HTML 引用已覆盖的 chunk | HTML 用硬化 `no-store, no-cache, must-revalidate, max-age=0`；`/_next/static` 长期缓存 + `immutable` |
@@ -32,6 +32,7 @@ h, err := nextstatic.New(nextstatic.Config{
     SEOInject: func(r *http.Request, html []byte) []byte {
         return seo.Render(r.URL.Path, html) // 注入内容须自行 HTML 转义
     },
+    // DisableCache: 本地开发边构建边看效果时设 true
     // APIPrefixes: 默认 ["/api/"]; 传空 slice 关闭
     // SPAFallback: 纯 SPA 项目 (无 SSG 动态页) 设 true
 })
@@ -67,10 +68,26 @@ API 前缀 JSON 404 → 直接静态文件 → RSC 点号路径还原 → RSC �
 
 sitemap、旧链接重定向等特殊路由应在外层路由先行匹配，再落到本 Handler。
 
+## 缓存与发布
+
+`New` 时遍历一次导出目录建立文件索引，之后路径解析只查内存；HTML 首次读盘后留在内存。扫描器打随机路径的未命中请求不再产生磁盘访问。
+
+| 配置 / 方法 | 作用 |
+|-------------|------|
+| `Handler.Reload()` | 重新遍历导出目录并清空 HTML 缓存；运行期替换了导出产物后调用，可与请求并发 |
+| `DisableCache` | 关闭索引与缓存，每次请求读盘；用于本地开发，生产保持 `false` |
+| `HTMLCacheMaxBytes` | HTML 缓存总量上限，默认 64MB，负值关闭；达到上限后新页面每次读盘，不做淘汰 |
+
+注意事项：
+
+- 运行期替换导出目录不会自动生效，需要重启进程或调用 `Reload()`；镜像部署（产物打进镜像）无需处理
+- `SEOInject` 收到的 `html` 是所有请求共享的缓存，禁止原地改写，必须返回新切片（`bytes.ReplaceAll`、`append` 均满足）
+- 索引区分大小写，Windows / macOS 上的行为与 Linux 一致；符号链接目录不展开
+
 ## 限制
 
 - 动态段占位符回退只处理单级动态段（最后一级目录替换为 `_`）；多级嵌套动态段在外层路由先行改写
-- HTML 模板每次请求读盘；高 QPS 的 SEO 注入场景建议在 `SEOInject` 上层自行缓存模板
+- SEO 注入结果不缓存，每次请求调用 `SEOInject`；注入逻辑要查库时在钩子内自行缓存
 
 ## 独立工具函数
 
