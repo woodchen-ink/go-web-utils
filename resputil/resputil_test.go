@@ -104,3 +104,44 @@ func TestMarshalFailureFallback(t *testing.T) {
 		t.Errorf("序列化失败应降级 500, got %d", rec.Code)
 	}
 }
+
+// ptrMarshaler 只有指针接收者实现 MarshalJSON
+type ptrMarshaler struct{ X int }
+
+func (p *ptrMarshaler) MarshalJSON() ([]byte, error) { return []byte(`"custom"`), nil }
+
+func TestPointerDataKeepsIdentity(t *testing.T) {
+	var nilList []int
+	var nilMap map[string]int
+	var nilPtr *ptrMarshaler
+	var nilIface any
+	list := []int{1}
+
+	tests := []struct {
+		name     string
+		data     any
+		expected string
+	}{
+		{name: "指针接收者MarshalJSON仍生效", data: &ptrMarshaler{X: 1}, expected: `"custom"`},
+		{name: "指向nil slice的指针归一为空数组", data: &nilList, expected: "[]"},
+		{name: "指向nil map的指针归一为空对象", data: &nilMap, expected: "{}"},
+		{name: "指向nil指针的指针归一为空对象", data: &nilPtr, expected: "{}"},
+		{name: "指向nil接口的指针归一为空对象", data: &nilIface, expected: "{}"},
+		{name: "指向非空slice的指针原样输出", data: &list, expected: "[1]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			OK(rec, tt.data)
+
+			var m map[string]json.RawMessage
+			if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+				t.Fatalf("解析失败: %v", err)
+			}
+			if string(m["data"]) != tt.expected {
+				t.Errorf("data = %s, expected %s", m["data"], tt.expected)
+			}
+		})
+	}
+}

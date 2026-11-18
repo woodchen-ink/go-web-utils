@@ -84,27 +84,41 @@ var emptyObject = map[string]any{}
 
 // normalizeData 把会序列化为 null 的空值替换为空对象/空数组:
 // nil、nil 指针、nil map 替换为 {}; nil slice 替换为 [];
-// 非 nil 指针解引用后递归归一化 (覆盖 `&list` 且 list 为 nil slice 的
-// 常见 GORM 查询写法)
+// 非 nil 指针只探查其指向的值 (覆盖 `&list` 且 list 为 nil slice 的常见
+// GORM 查询写法), 不为空时原样返回指针本身 —— 解引用成值再序列化会拷贝
+// 整个结构体, 还会让指针接收者的 MarshalJSON 失效
 func normalizeData(data any) any {
 	if data == nil {
 		return emptyObject
 	}
-	v := reflect.ValueOf(data)
-	switch v.Kind() {
-	case reflect.Slice:
-		if v.IsNil() {
-			return []any{}
-		}
-	case reflect.Map:
-		if v.IsNil() {
-			return emptyObject
-		}
-	case reflect.Ptr:
-		if v.IsNil() {
-			return emptyObject
-		}
-		return normalizeData(v.Elem().Interface())
+	if empty := emptyReplacement(reflect.ValueOf(data)); empty != nil {
+		return empty
 	}
 	return data
+}
+
+// emptyReplacement 沿指针/接口链探查 v, 最终会序列化为 null 时返回对应的
+// 空对象/空数组, 否则返回 nil
+func emptyReplacement(v reflect.Value) any {
+	for {
+		switch v.Kind() {
+		case reflect.Slice:
+			if v.IsNil() {
+				return []any{}
+			}
+			return nil
+		case reflect.Map:
+			if v.IsNil() {
+				return emptyObject
+			}
+			return nil
+		case reflect.Ptr, reflect.Interface:
+			if v.IsNil() {
+				return emptyObject
+			}
+			v = v.Elem()
+		default:
+			return nil
+		}
+	}
 }
