@@ -31,7 +31,7 @@ CZL Connect 数据同步接口 `/api/sync/v1` 的 Go 客户端，桌面端直接
 
 ```go
 client, _ := syncsdk.NewClient(syncsdk.ClientOptions{
-    BaseURL: "https://sync.czl.net/api/sync/v1",
+    BaseURL: "https://connect.czl.net/api/sync/v1",
     Tokens:  tokens, // Token(ctx); 可选实现 InvalidateToken, 收到 401 时刷新后重试一次
 })
 keys, _ := syncsdk.NewKeyManager(client, dpapiStore, syncsdk.KeyManagerOptions{

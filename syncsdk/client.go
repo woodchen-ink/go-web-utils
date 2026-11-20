@@ -72,7 +72,7 @@ func (p RetryPolicy) backoff(attempt int) time.Duration {
 
 // ClientOptions 配置 Client。
 type ClientOptions struct {
-	// BaseURL 是同步接口根地址, 含 /api/sync/v1, 例如 "https://sync.czl.net/api/sync/v1"。
+	// BaseURL 是同步接口根地址, 含 /api/sync/v1, 例如 "https://connect.czl.net/api/sync/v1"。
 	BaseURL string
 	// Tokens 提供用户访问令牌, 必填。
 	Tokens TokenSource

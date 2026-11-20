@@ -19,7 +19,7 @@ MemoryCursorStore / MemoryKeyStore 只用于测试。
 接入流程:
 
 	client, _ := syncsdk.NewClient(syncsdk.ClientOptions{
-		BaseURL: "https://sync.czl.net/api/sync/v1",
+		BaseURL: "https://connect.czl.net/api/sync/v1",
 		Tokens:  tokens, // 实现 Token(ctx), 可选 InvalidateToken
 	})
 	keys, _ := syncsdk.NewKeyManager(client, dpapiStore, syncsdk.KeyManagerOptions{
