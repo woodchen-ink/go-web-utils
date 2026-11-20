@@ -30,6 +30,11 @@ Cookie 工具 (cookieutil 包):
   - TickGuard 单实例防重叠
   - Debounced 去抖聚合队列 (批量写外部系统)
 
+数据同步客户端 (syncsdk 包, 依赖 golang.org/x/crypto):
+  - CZL Connect 数据同步 /api/sync/v1 的 Go SDK: 离线出站队列、冲突回调、增量拉取、SSE 订阅
+  - 端到端加密 (syncsdk/e2e): 用户密钥、恢复码、空间密钥轮换、新设备授权
+  - 测试用进程内假服务端 (syncsdk/synctest)
+
 Next.js 静态托管 (nextstatic 包):
   - Next.js export 产物托管，RSC payload 正确的 Content-Type 与 Vary
   - trailing slash 规范化、动态路由占位符回退、SEO 占位符注入钩子

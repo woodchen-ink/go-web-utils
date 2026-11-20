@@ -25,7 +25,7 @@ For complete documentation, visit: https://go-web-utils.czl.net/
 
 ## ✨ Features
 
-- 🚀 **High Performance**: Zero dependencies, pure standard library implementation
+- 🚀 **High Performance**: Pure standard library, zero dependencies except `syncsdk` (uses `golang.org/x/crypto`)
 - 🛡️ **Production Ready**: Complete test coverage and documentation
 
 ### Packages
@@ -39,6 +39,7 @@ For complete documentation, visit: https://go-web-utils.czl.net/
 | `cookieutil` | Auth cookies with safe defaults (HttpOnly enforced), CSRF double-submit tokens |
 | `cronutil` | Idle exponential backoff gate, non-overlapping tick guard, debounced flush queue |
 | `nextstatic` | Next.js static export hosting: RSC headers, dynamic route fallback, SEO injection |
+| `syncsdk` | CZL Connect data sync client: offline outbox, conflict callbacks, SSE subscription, blob dedupe, end-to-end encryption and key management (`syncsdk/e2e`), in-process fake server for tests (`syncsdk/synctest`) |
 
 ## 📦 Installation
 

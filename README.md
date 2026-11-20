@@ -25,7 +25,7 @@
 
 ## ✨ 特性
 
-- 🚀 **高性能**: 零依赖，纯标准库实现
+- 🚀 **高性能**: 除 `syncsdk` 依赖 `golang.org/x/crypto` 外，其余包零依赖、纯标准库实现
 - 🛡️ **生产就绪**: 完整的测试覆盖和文档
 
 ### 包一览
@@ -39,6 +39,7 @@
 | `cookieutil` | 安全默认值的认证 Cookie (强制 HttpOnly)、CSRF double-submit |
 | `cronutil` | 定时任务空轮指数退避、单实例防重叠、去抖聚合队列 |
 | `nextstatic` | Next.js 静态导出托管：RSC 头处理、动态路由回退、SEO 注入 |
+| `syncsdk` | CZL Connect 数据同步客户端：离线出站队列、冲突回调、SSE 订阅、附件去重，端到端加密与密钥管理 (`syncsdk/e2e`)，测试用假服务端 (`syncsdk/synctest`) |
 
 ## 📦 安装
 

@@ -8,6 +8,7 @@
     "timex",
     "cookieutil",
     "cronutil",
-    "nextstatic"
+    "nextstatic",
+    "syncsdk"
   ]
 }

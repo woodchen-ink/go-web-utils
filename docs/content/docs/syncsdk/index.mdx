@@ -1,0 +1,150 @@
+---
+title: 数据同步客户端 (syncsdk)
+description: CZL Connect 数据同步 Go SDK：离线出站队列、冲突回调、SSE 订阅、附件去重与端到端加密
+---
+
+# syncsdk
+
+CZL Connect 数据同步接口 `/api/sync/v1` 的 Go 客户端，桌面端直接引用。同步粒度是文档级（整份 JSON + 版本号），冲突由客户端回调处理；端到端加密的密钥生成、恢复码、设备授权、成员授予与轮换、加解密全部在 SDK 内完成，应用只提供本机密钥库与界面回调。
+
+| 包 | 职责 |
+|----|------|
+| `syncsdk` | `Client`（接口）、`KeyManager`（密钥生命周期）、`Engine`（推送 / 拉取 / 订阅 / 附件） |
+| `syncsdk/e2e` | 纯密码学原语，不做 I/O |
+| `syncsdk/synctest` | 进程内假服务端（httptest），供 SDK 与接入方集成测试 |
+
+本包依赖 `golang.org/x/crypto`（Argon2id、nacl/box），其余包仍为零依赖。
+
+## 接入
+
+应用实现以下接口：
+
+| 接口 | 作用 | 桌面端常见实现 |
+|------|------|----------------|
+| `Outbox` | 持久化、有序、按文档去重的出站队列 | SQLite 表，每个方法一个事务 |
+| `CursorStore` | 每个空间的拉取游标 | SQLite |
+| `KeyStore` | 按名称存取秘密字节 | Windows DPAPI / macOS 钥匙串 |
+| `Applier` | 把拉取到的变更与写入确认落到本地库 | 业务表 + `rev` / `dirty` 列 |
+| `ConflictResolver` | 409 冲突时决定保留服务端、覆盖或另存副本 | 单证：服务端版本落地，本地另存「（冲突副本）」 |
+
+`MemoryOutbox` / `MemoryCursorStore` / `MemoryKeyStore` 只用于测试。
+
+```go
+client, _ := syncsdk.NewClient(syncsdk.ClientOptions{
+    BaseURL: "https://sync.czl.net/api/sync/v1",
+    Tokens:  tokens, // Token(ctx); 可选实现 InvalidateToken, 收到 401 时刷新后重试一次
+})
+keys, _ := syncsdk.NewKeyManager(client, dpapiStore, syncsdk.KeyManagerOptions{
+    Namespace: "tradedocs/" + userID,
+})
+
+switch st, _ := keys.Status(ctx); st {
+case syncsdk.KeyStatusNotEnrolled:
+    code, _ := keys.Enroll(ctx) // 恢复码只展示一次, 要求用户确认已保存
+    show(code.String())
+case syncsdk.KeyStatusLocked:
+    _ = keys.UnlockWithRecoveryCode(ctx, typed) // 或走新设备授权
+}
+
+engine, _ := syncsdk.NewEngine(syncsdk.EngineOptions{
+    Client: client, Keys: keys,
+    Outbox: outbox, Cursors: cursors, Applier: db, Resolver: resolve,
+    AppendOnly:   []string{"activity"},
+    BlobCacheDir: filepath.Join(cacheDir, "blobs"),
+})
+
+_ = engine.Save(ctx, space, "shipments", id, row.Rev, payload) // 断网照常入队
+go engine.Subscribe(ctx, space, syncsdk.SubscribeOptions{})    // 持续同步
+```
+
+## 同步流程
+
+- **推送**：`Save` / `Delete` 只写出站队列；`Push` 按序加密、经 `batch` 提交（每批 ≤ 100），逐条处理结果。成功后 `Outbox.Ack` 并回调 `Applier.Committed`；推送途中用户又改了同一文档时，新条目的 `baseRev` 自动改为新版本
+- **冲突**：409 附带服务端当前文档，SDK 解密后与本地明文一起交给 `ConflictResolver`。若服务端内容正是本机这次写入（应答丢失后重试），直接视为成功，不打扰回调
+- **拉取**：按游标增量拉取、解密后交 `Applier.Apply`，成功才前进游标；本地还有未推送修改的文档标 `Pending`。游标过期（410）时调用 `Applier.ResetSpace` 再从 0 全量重拉
+- **订阅**：SSE `changed` 序号超过本地游标或本地有新写入时同步，多次触发合并；断线指数退避重连，期间按 `PollInterval` 回退轮询，连接正常时按 `SafetyInterval` 兜底
+- **拒绝**：空间级拒绝（非成员、只读、订阅到期）让整轮返回 `ErrForbidden`，修改留在队列；单条拒绝（集合无权写、超限）交 `OnRejected`，返回 `true` 才出队
+- **附件**：上传前本地算出标识并 `HEAD` 去重；下载解密到临时文件、校验通过再改名进缓存目录
+- **操作记录**：`ActivityLog.Append` 写只追加集合；展示操作人只认 `Change.UpdatedBy` / `UpdatedAt`（服务端按令牌写入），不认内容里的自报身份
+- **presence**：`Editing` 每 20 秒心跳一次，他人编辑状态经 `OnPresence` 下发
+
+## 密钥生命周期
+
+| 场景 | 调用 | 说明 |
+|------|------|------|
+| 首次开通 | `Enroll` | 生成密钥对与恢复码，上传公钥与私钥副本；服务端已有公钥返回 `ErrConflict` |
+| 新设备 · 恢复码 | `UnlockWithRecoveryCode` | 校验位能拦下绝大多数输错 |
+| 新设备 · 设备批准 | `StartDeviceEnrollment` → `WaitCode` → `WaitApproval`；已有设备 `PendingDeviceRequests` → `BeginDeviceApproval` → `WaitCode` → `Approve` | 两端各自计算 6 位码，用户核对一致后批准 |
+| 重置恢复码 | `ResetRecoveryCode` | 旧恢复码作废 |
+| 新成员 | 引擎每轮 `SyncSpace` 自动处理 | owner / admin 为待授予成员封装全部版本；`ApproveGrant` 回调可展示指纹或改为人工确认 |
+| 移除成员 | 引擎每轮 `SyncSpace` 自动处理 | 服务端置 `rotationRequired`，下一个在线的管理端轮换；`Engine.Reencrypt` 把旧文档换到新版本 |
+
+空间当前版本只进不退：服务端无法把空间回退到被移除成员仍持有的旧密钥。
+
+## 线上格式
+
+二进制值一律无填充 base64url；`LP(x)` 表示大端 uint32 长度前缀 + 内容。
+
+**文档信封**（`payload` 字段）：
+
+```json
+{"v":1,"kv":3,"nonce":"<12 字节>","ct":"<AES-256-GCM 密文+标签>"}
+```
+
+AAD = `"czl-sync-doc-v1" || LP(space) || LP(collection) || LP(id) || uint32(v) || uint32(kv)`。
+
+**附件流**：
+
+```
+header = "CZLB" || 0x01 || uint32(kv) || uint32(chunkSize)        // 13 字节, chunkSize 默认 64 KiB
+chunk  = nonce[12] || AES-256-GCM(明文块)                         // 末块 0..chunkSize 字节
+AAD    = "czl-sync-blob-v1" || LP(space) || LP(blobId) || header || uint64(块序号) || uint8(final)
+blobId = hex(HMAC-SHA256(附件标识密钥, 明文))                       // 未加密应用为 hex(SHA-256(明文))
+```
+
+**恢复码**：18 字节随机数 + 2 字节校验（`SHA-256("czl-sync-recovery-v1" || 0x00 || 随机数)` 前 2 字节），Crockford base32 32 位，`XXXX-XXXX-…` 8 组。输入时忽略大小写与分隔符，I/L 读作 1、O 读作 0。
+
+**私钥副本**（`PUT /keys/me` 的 `escrow`）：
+
+```json
+{"v":1,"kdf":{"alg":"argon2id","t":3,"m":65536,"p":4,"salt":"<16 字节>"},"nonce":"<12 字节>","ct":"…"}
+```
+
+恢复密钥 = Argon2id(恢复码 20 字节中的随机数部分, salt)，AAD = `"czl-sync-escrow-v1" || LP(v) || LP(用户公钥)`。
+
+**空间密钥封装**：`sealedbox(成员公钥, "CZLSK1" || uint32(version) || LP(space) || 空间密钥[32] || 附件标识密钥[32])`，解封时校验空间与版本。
+
+**公钥指纹**：`SHA-256("czl-sync-fingerprint-v1" || 0x00 || 公钥)` 前 20 字节，Crockford base32，4 位一组共 8 组。
+
+**新设备校验码**：新设备先公布临时公钥与承诺 `SHA-256("czl-sync-device-commit-v1" || LP(tempPub) || LP(Nn))`，批准设备公布 `Na`，新设备再揭示 `Nn`；
+
+```
+code = uint64be(SHA-256("czl-sync-device-sas-v1" || LP(requestId) || LP(tempPub) || LP(userPub) || LP(Nn) || LP(Na))[0:8]) mod 10^6
+```
+
+封装结果 = `sealedbox(tempPub, "CZLDK1" || LP(requestId) || 用户私钥[32])`。承诺让替换临时公钥的中间人只有 10⁻⁶ 的一次机会，无法离线碰撞。
+
+## 服务端契约要点
+
+除设计文档的接口表外，SDK 依赖以下细节（`synctest` 按此实现）：
+
+- 成功响应为 `resputil` 的 `{code: 200, data, msg}`；错误用 HTTP 状态 + 业务码，409 的 `data` 是当前文档
+- 空间级 403（非成员、只读、订阅到期）作用于整个请求，`batch` 里不出现；集合级 403 与 413 在逐条结果里
+- `GET /spaces/{space}/keys` 返回 `role`、`members`（全部已上传公钥的成员）与 `rotationRequired`
+- `PUT /spaces/{space}/keys/{version}` 带 `rotate`：`true` 要求 `version = 当前 + 1` 且覆盖全部成员，否则 409；`false` 只给已有版本补授，已有封装不覆盖
+- `PUT /keys/me` 的 `recoveryVersion` 必须等于当前 + 1，已有记录时公钥不可改，否则 409
+- 新设备请求增加 `commitment`、`challenge`（`approverNonce`）、`reveal`（`deviceNonce`）、`approve`（`sealedKey`）、`claim` 各步，每个值只能写一次，重复提交相同值幂等
+- SSE 事件：`event: changed` + `{"seq":N}`，`event: presence` + `{"presence":[...]}`；支持 `Last-Event-ID`
+
+## 测试
+
+```go
+srv := synctest.New(synctest.Options{E2E: syncsdk.E2ERequired})
+defer srv.Close()
+srv.RegisterCollection("shipments", synctest.Collection{})
+token := srv.AddUser("alice")
+client, _ := syncsdk.NewClient(syncsdk.ClientOptions{BaseURL: srv.BaseURL(), Tokens: syncsdk.TokenFunc(
+    func(context.Context) (string, error) { return token, nil })})
+```
+
+`CreateOrg` / `AddMember` / `RemoveMember` / `SetReadOnly` 摆布状态，`SetOffline` / `FailNext` / `DropResponseNext` 模拟断网、服务端故障与应答丢失，`ExpireCursors` 触发 410，`RawDoc` 查看服务端存储的密文。
