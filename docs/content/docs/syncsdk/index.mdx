@@ -66,7 +66,7 @@ go engine.Subscribe(ctx, space, syncsdk.SubscribeOptions{})    // 持续同步
 - **拉取**：按游标增量拉取、解密后交 `Applier.Apply`，成功才前进游标；本地还有未推送修改的文档标 `Pending`。游标过期（410）时调用 `Applier.ResetSpace` 再从 0 全量重拉
 - **订阅**：SSE `changed` 序号超过本地游标或本地有新写入时同步，多次触发合并；断线指数退避重连，期间按 `PollInterval` 回退轮询，连接正常时按 `SafetyInterval` 兜底
 - **拒绝**：空间级拒绝（非成员、只读、订阅到期）让整轮返回 `ErrForbidden`，修改留在队列；单条拒绝（集合无权写、超限）交 `OnRejected`，返回 `true` 才出队
-- **附件**：上传前本地算出标识并 `HEAD` 去重；下载解密到临时文件、校验通过再改名进缓存目录
+- **附件**：上传前本地算出标识并 `HEAD` 去重；下载解密到临时文件、校验通过再改名进缓存目录。端到端加密下服务端不知道哪些附件还被引用，由 owner / admin 设备调 `Client.PutBlobRefs` 上报空间里仍被引用的全部附件（完整拉取后按全部文档计算），其余标记为未引用、30 天后清理并扣减用量，列表里已标记的撤销标记；空列表表示全部不再引用。从不上报的空间不清理任何附件
 - **操作记录**：`ActivityLog.Append` 写只追加集合；展示操作人只认 `Change.UpdatedBy` / `UpdatedAt`（服务端按令牌写入），不认内容里的自报身份
 - **presence**：`Editing` 每 20 秒心跳一次，他人编辑状态经 `OnPresence` 下发。`ClientOptions.DeviceID` 设置后按设备区分：同一账号另一台设备的心跳也会下发（`Presence.UserID` 是自己、`DeviceID` 不同），只排除本设备；不设时按账号排除，看不到自己的任何设备。设备标识每台设备生成一次存在本机数据目录（`LoadOrCreateDeviceID`），不要随配置同步
 

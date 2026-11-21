@@ -647,6 +647,58 @@ func TestDeviceIDHelpers(t *testing.T) {
 	}
 }
 
+// 引用校正: 未上报的附件标记为未引用, 再次上报撤销标记; 空列表标记全部; 角色不足与非法标识报错。
+func TestPutBlobRefs(t *testing.T) {
+	srv := synctest.New(synctest.Options{})
+	t.Cleanup(srv.Close)
+	registerAll(srv)
+	a := newDevice(t, srv, "alice", deviceOpts{plain: true})
+	space := synctest.PersonalKey("alice")
+	b1, err := a.engine.UploadBlobBytes(a.ctx(), me, []byte("one"), "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b2, err := a.engine.UploadBlobBytes(a.ctx(), me, []byte("two"), "text/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := a.client.PutBlobRefs(a.ctx(), me, []string{b1}); err != nil || n != 1 {
+		t.Fatalf("first report marked %d err %v", n, err)
+	}
+	if srv.BlobUnreferenced(space, b1) || !srv.BlobUnreferenced(space, b2) {
+		t.Fatalf("marks after first report: %v", srv.UnreferencedBlobs(space))
+	}
+	// 已标记的不重复计数; 重新列入即撤销。
+	if n, err := a.client.PutBlobRefs(a.ctx(), me, []string{b1}); err != nil || n != 0 {
+		t.Fatalf("repeat report marked %d err %v", n, err)
+	}
+	if n, err := a.client.PutBlobRefs(a.ctx(), me, []string{b1, b2}); err != nil || n != 0 || len(srv.UnreferencedBlobs(space)) != 0 {
+		t.Fatalf("restore marked %d err %v left %v", n, err, srv.UnreferencedBlobs(space))
+	}
+	// 空列表 = 全部不再引用。
+	if n, err := a.client.PutBlobRefs(a.ctx(), me, nil); err != nil || n != 2 {
+		t.Fatalf("empty report marked %d err %v", n, err)
+	}
+	if got := srv.UnreferencedBlobs(space); len(got) != 2 {
+		t.Fatalf("empty report marks %v", got)
+	}
+	var ae *syncsdk.APIError
+	if _, err := a.client.PutBlobRefs(a.ctx(), me, []string{"NOT-A-BLOB"}); !errors.As(err, &ae) || ae.Status != 400 {
+		t.Fatalf("invalid id: %v", err)
+	}
+
+	srv.CreateOrg("org_2", "ACME", "alice")
+	bob := newDevice(t, srv, "bob", deviceOpts{plain: true})
+	srv.AddMember("org_2", "bob", syncsdk.RoleMember)
+	_, err = bob.client.PutBlobRefs(bob.ctx(), "org_2", []string{})
+	if !errors.Is(err, syncsdk.ErrForbidden) || !errors.As(err, &ae) || ae.Code != synctest.CodeRoleTooLow {
+		t.Fatalf("member report: %v", err)
+	}
+	if n, err := a.client.PutBlobRefs(a.ctx(), "org_2", []string{}); err != nil || n != 0 {
+		t.Fatalf("owner report on empty org marked %d err %v", n, err)
+	}
+}
+
 func TestPlaintextMode(t *testing.T) {
 	srv := synctest.New(synctest.Options{})
 	t.Cleanup(srv.Close)

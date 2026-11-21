@@ -104,6 +104,7 @@ type space struct {
 	wrapped                map[int]map[string]string // version → user → wrapped
 	rotationRequired       bool
 	blobs                  map[string][]byte
+	unreferenced           map[string]bool // 引用校正标记为未引用的附件
 	presence               map[presenceKey]presenceVal
 	subs                   map[chan string]subscriber
 }
@@ -200,7 +201,7 @@ func PersonalKey(userID string) string { return "me:" + userID }
 
 func newSpace(key, pathID, typ, name string, members map[string]string) *space {
 	return &space{key: key, pathID: pathID, typ: typ, name: name, members: members,
-		docs: map[docKey]*doc{}, wrapped: map[int]map[string]string{}, blobs: map[string][]byte{},
+		docs: map[docKey]*doc{}, wrapped: map[int]map[string]string{}, blobs: map[string][]byte{}, unreferenced: map[string]bool{},
 		presence: map[presenceKey]presenceVal{}, subs: map[chan string]subscriber{}}
 }
 
@@ -260,6 +261,25 @@ func (s *Server) ExpireCursors(spaceKey string) {
 		}
 	}
 	sp.minCursor = sp.seq
+}
+
+// BlobUnreferenced 报告该空间的附件是否被引用校正标记为未引用 (真实服务端 30 天后清理)。
+func (s *Server) BlobUnreferenced(spaceKey, blobID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.spaces[spaceKey].unreferenced[blobID]
+}
+
+// UnreferencedBlobs 返回该空间被标记为未引用的附件标识 (升序)。
+func (s *Server) UnreferencedBlobs(spaceKey string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := []string{}
+	for id := range s.spaces[spaceKey].unreferenced {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // RawDoc 返回服务端存储的文档原样 (含密文), 模拟服务端或库被拖取。
@@ -454,6 +474,9 @@ func (s *Server) spaceRoute(w http.ResponseWriter, r *http.Request, user, pathID
 	case len(p) == 2 && p[0] == "blobs":
 		s.count(m + " blob")
 		s.blob(w, r, user, pathID, p[1])
+	case len(p) == 1 && p[0] == "blob-refs" && m == http.MethodPut:
+		s.count("PUT blob-refs")
+		s.putBlobRefs(w, r, user, pathID)
 	case len(p) == 1 && p[0] == "keys" && m == http.MethodGet:
 		s.spaceKeys(w, user, pathID)
 	case len(p) == 2 && p[0] == "keys" && m == http.MethodPut:
@@ -751,6 +774,65 @@ func (s *Server) blob(w http.ResponseWriter, r *http.Request, user, pathID, blob
 	default:
 		resputil.FailStatus(w, http.StatusMethodNotAllowed, CodeInvalidRequest, "method_not_allowed")
 	}
+}
+
+// putBlobRefs 引用校正: 不在上报列表里的附件标记为未引用, 列表里的取消标记; 返回新标记数。
+// 与真实服务端一致: 仅 owner / admin, 不受空间只读限制, 重新上传已存在的附件不清除标记。
+func (s *Server) putBlobRefs(w http.ResponseWriter, r *http.Request, user, pathID string) {
+	var in struct {
+		BlobIDs []string `json:"blobIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		resputil.FailStatus(w, http.StatusBadRequest, CodeInvalidRequest, "invalid_body")
+		return
+	}
+	if len(in.BlobIDs) > syncsdk.MaxBlobRefs {
+		resputil.FailStatus(w, http.StatusRequestEntityTooLarge, CodeTooLarge, "too_many_refs")
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sp, role, ok := s.resolve(user, pathID)
+	if !ok {
+		resputil.FailStatus(w, http.StatusForbidden, CodeNotMember, "not_member")
+		return
+	}
+	if roleRank(role) < roleRank(syncsdk.RoleAdmin) {
+		resputil.FailStatus(w, http.StatusForbidden, CodeRoleTooLow, "role_too_low")
+		return
+	}
+	refs := map[string]bool{}
+	for _, id := range in.BlobIDs {
+		if !validBlobID(id) {
+			resputil.FailStatus(w, http.StatusBadRequest, CodeInvalidRequest, "invalid_blob_id")
+			return
+		}
+		refs[id] = true
+	}
+	var marked int64
+	for id := range sp.blobs {
+		switch {
+		case refs[id]:
+			delete(sp.unreferenced, id)
+		case !sp.unreferenced[id]:
+			sp.unreferenced[id] = true
+			marked++
+		}
+	}
+	resputil.OK(w, map[string]any{"unreferenced": marked})
+}
+
+// validBlobID 附件标识: 64 位小写十六进制。
+func validBlobID(id string) bool {
+	if len(id) != 64 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		if c := id[i]; !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) servePresigned(w http.ResponseWriter, r *http.Request) {

@@ -118,6 +118,34 @@ func (c *Client) PutBlob(ctx context.Context, space, blobID string, size int64, 
 	return nil
 }
 
+// MaxBlobRefs 是 PutBlobRefs 一次可上报的附件数上限 (与服务端一致)。
+const MaxBlobRefs = 100000
+
+// PutBlobRefs 引用校正 (PUT /spaces/{space}/blob-refs, 仅 owner / admin): 上报空间里仍被引用的
+// 全部附件标识, 不在列表里的附件标记为未引用, 服务端 30 天后清理并扣减用量; 列表里已被标记的附件
+// 取消标记。blobIDs 为空表示空间里所有附件都不再被引用。返回本次新标记为未引用的附件数。
+//
+// 端到端加密下服务端看不到文档内容, 只能靠客户端上报; 从不上报的空间不会清理任何附件。
+// 引用集合应取空间全部文档 (先完整拉取再计算), 否则其他设备刚上传、文档尚未拉到的附件会被误标;
+// 误标在下次上报时自动撤销, 只要在 30 天内再报一次即可。服务端标记不随重新上传清除
+// (UploadBlob 遇到已存在的附件直接跳过), 上传后仍需把它列入下次上报。
+func (c *Client) PutBlobRefs(ctx context.Context, space string, blobIDs []string) (marked int64, err error) {
+	if len(blobIDs) > MaxBlobRefs {
+		return 0, fmt.Errorf("syncsdk: %d blob refs exceed MaxBlobRefs (%d)", len(blobIDs), MaxBlobRefs)
+	}
+	if blobIDs == nil {
+		blobIDs = []string{}
+	}
+	var out struct {
+		Unreferenced int64 `json:"unreferenced"`
+	}
+	r := &request{method: http.MethodPut, path: []string{"spaces", space, "blob-refs"}}
+	if err := c.doJSON(ctx, r, map[string]any{"blobIds": blobIDs}, &out); err != nil {
+		return 0, err
+	}
+	return out.Unreferenced, nil
+}
+
 // GetBlob 下载附件 (GET /spaces/{space}/blobs/{blobId}, 跟随 302 到预签名地址)。
 // 调用方负责关闭返回的 ReadCloser。
 func (c *Client) GetBlob(ctx context.Context, space, blobID string) (io.ReadCloser, error) {
