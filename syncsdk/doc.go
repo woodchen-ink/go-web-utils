@@ -21,6 +21,8 @@ MemoryCursorStore / MemoryKeyStore 只用于测试。
 	client, _ := syncsdk.NewClient(syncsdk.ClientOptions{
 		BaseURL: "https://connect.czl.net/api/sync/v1",
 		Tokens:  tokens, // 实现 Token(ctx), 可选 InvalidateToken
+		// 本机设备标识, presence 按设备区分 (同账号其他设备可见); 存本机数据目录, 不随配置同步
+		DeviceID: deviceID, // syncsdk.LoadOrCreateDeviceID(filepath.Join(dataDir, "device-id"))
 	})
 	keys, _ := syncsdk.NewKeyManager(client, dpapiStore, syncsdk.KeyManagerOptions{
 		Namespace: "tradedocs/" + userID,

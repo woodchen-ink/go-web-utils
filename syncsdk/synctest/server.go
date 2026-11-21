@@ -83,7 +83,15 @@ type doc struct {
 	history []syncsdk.Doc
 }
 
-type presenceKey struct{ collection, id, user string }
+type presenceKey struct{ collection, id, user, device string }
+
+type presenceVal struct {
+	exp  time.Time
+	name string
+}
+
+// subscriber 是一条 SSE 连接的调用方。
+type subscriber struct{ user, device string }
 
 type space struct {
 	key, pathID, typ, name string
@@ -96,8 +104,8 @@ type space struct {
 	wrapped                map[int]map[string]string // version → user → wrapped
 	rotationRequired       bool
 	blobs                  map[string][]byte
-	presence               map[presenceKey]time.Time
-	subs                   map[chan string]string // channel → user
+	presence               map[presenceKey]presenceVal
+	subs                   map[chan string]subscriber
 }
 
 type device struct {
@@ -193,7 +201,7 @@ func PersonalKey(userID string) string { return "me:" + userID }
 func newSpace(key, pathID, typ, name string, members map[string]string) *space {
 	return &space{key: key, pathID: pathID, typ: typ, name: name, members: members,
 		docs: map[docKey]*doc{}, wrapped: map[int]map[string]string{}, blobs: map[string][]byte{},
-		presence: map[presenceKey]time.Time{}, subs: map[chan string]string{}}
+		presence: map[presenceKey]presenceVal{}, subs: map[chan string]subscriber{}}
 }
 
 // CreateOrg 建立组织空间, owner 为其所有者。
@@ -453,7 +461,7 @@ func (s *Server) spaceRoute(w http.ResponseWriter, r *http.Request, user, pathID
 	case len(p) == 1 && p[0] == "events" && m == http.MethodGet:
 		s.events(w, r, user, pathID)
 	case len(p) == 3 && p[0] == "presence" && m == http.MethodPut:
-		s.touchPresence(w, user, pathID, p[1], p[2])
+		s.touchPresence(w, r, user, pathID, p[1], p[2])
 	default:
 		resputil.FailStatus(w, http.StatusNotFound, CodeNotFound, "not_found")
 	}
@@ -492,23 +500,34 @@ func (s *Server) changes(w http.ResponseWriter, r *http.Request, user, pathID st
 	if page.Docs == nil {
 		page.Docs = []syncsdk.Doc{}
 	}
-	page.Presence = s.presenceFor(sp, user)
+	device, _ := syncsdk.DeviceFromHeader(r.Header)
+	page.Presence = s.presenceFor(sp, user, device)
 	resputil.OK(w, page)
 }
 
-func (s *Server) presenceFor(sp *space, user string) []syncsdk.Presence {
+// presenceFor 下发给 (user, device) 的 presence: 排除其自己的心跳 (规则见 syncsdk.IsOwnPresence)。
+func (s *Server) presenceFor(sp *space, user, device string) []syncsdk.Presence {
 	now := s.now()
 	out := []syncsdk.Presence{}
-	for k, exp := range sp.presence {
-		if exp.Before(now) {
+	for k, v := range sp.presence {
+		if v.exp.Before(now) {
 			delete(sp.presence, k)
 			continue
 		}
-		if k.user != user {
-			out = append(out, syncsdk.Presence{Collection: k.collection, ID: k.id, UserID: k.user, ExpiresAt: exp})
+		p := syncsdk.Presence{Collection: k.collection, ID: k.id, UserID: k.user, DeviceID: k.device, DeviceName: v.name, ExpiresAt: v.exp}
+		if !syncsdk.IsOwnPresence(p, user, device) {
+			out = append(out, p)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ID != out[j].ID {
+			return out[i].ID < out[j].ID
+		}
+		if out[i].UserID != out[j].UserID {
+			return out[i].UserID < out[j].UserID
+		}
+		return out[i].DeviceID < out[j].DeviceID
+	})
 	return out
 }
 
@@ -991,8 +1010,8 @@ func (s *Server) devicesRoute(w http.ResponseWriter, r *http.Request, user strin
 // ---- events & presence ----
 
 func (s *Server) broadcast(sp *space, msg, except string) {
-	for ch, u := range sp.subs {
-		if u == except {
+	for ch, sub := range sp.subs {
+		if sub.user == except {
 			continue
 		}
 		select {
@@ -1011,7 +1030,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, user, pathID str
 		return
 	}
 	ch := make(chan string, 16)
-	sp.subs[ch] = user
+	device, _ := syncsdk.DeviceFromHeader(r.Header)
+	sp.subs[ch] = subscriber{user: user, device: device}
 	seq := sp.seq
 	s.mu.Unlock()
 	defer func() {
@@ -1065,7 +1085,7 @@ func (s *Server) DropEventStreams(spaceKey string) {
 	}
 }
 
-func (s *Server) touchPresence(w http.ResponseWriter, user, pathID, collection, id string) {
+func (s *Server) touchPresence(w http.ResponseWriter, r *http.Request, user, pathID, collection, id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sp, _, ok := s.resolve(user, pathID)
@@ -1073,12 +1093,15 @@ func (s *Server) touchPresence(w http.ResponseWriter, user, pathID, collection, 
 		resputil.FailStatus(w, http.StatusForbidden, CodeNotMember, "not_member")
 		return
 	}
-	sp.presence[presenceKey{collection, id, user}] = s.now().Add(60 * time.Second)
-	for ch, u := range sp.subs {
-		if u == user {
+	device, name := syncsdk.DeviceFromHeader(r.Header)
+	exp := s.now().Add(60 * time.Second)
+	sp.presence[presenceKey{collection, id, user, device}] = presenceVal{exp: exp, name: name}
+	self := syncsdk.Presence{UserID: user, DeviceID: device}
+	for ch, sub := range sp.subs {
+		if syncsdk.IsOwnPresence(self, sub.user, sub.device) {
 			continue
 		}
-		b, _ := json.Marshal(map[string]any{"presence": s.presenceFor(sp, u)})
+		b, _ := json.Marshal(map[string]any{"presence": s.presenceFor(sp, sub.user, sub.device)})
 		select {
 		case ch <- "event: presence\ndata: " + string(b) + "\n\n":
 		default:

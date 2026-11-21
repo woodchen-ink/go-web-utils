@@ -110,7 +110,8 @@ type EngineOptions struct {
 	// OnRejected 在服务端永久拒绝某条写入 (403 无权写该集合、413 超限等) 时调用,
 	// 返回 true 从队列删除, false 保留到下次同步。nil 时保留, 避免静默丢数据。
 	OnRejected func(ctx context.Context, item OutboxItem, err error) (drop bool)
-	// OnPresence 在拉取或事件流带回他人编辑状态时调用。
+	// OnPresence 在拉取或事件流带回他人编辑状态时调用。Client 设了 DeviceID 时也包含
+	// 本人其他设备的心跳 (Presence.UserID 是自己、DeviceID 不同), 可据此提示「在另一台设备上使用中」。
 	OnPresence func(space string, presence []Presence)
 	// BlobCacheDir 是附件下载缓存目录; 使用 BlobPath 时必填。
 	BlobCacheDir string

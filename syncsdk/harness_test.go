@@ -112,9 +112,11 @@ type device struct {
 }
 
 type deviceOpts struct {
-	plain   bool
-	token   string
-	cacheTo string
+	plain      bool
+	token      string
+	cacheTo    string
+	deviceID   string
+	deviceName string
 }
 
 func fastRetry() syncsdk.RetryPolicy {
@@ -128,9 +130,11 @@ func newDevice(t *testing.T, srv *synctest.Server, user string, o deviceOpts) *d
 		tok = srv.AddUser(user)
 	}
 	c, err := syncsdk.NewClient(syncsdk.ClientOptions{
-		BaseURL: srv.BaseURL(),
-		Tokens:  syncsdk.TokenFunc(func(context.Context) (string, error) { return tok, nil }),
-		Retry:   fastRetry(),
+		BaseURL:    srv.BaseURL(),
+		Tokens:     syncsdk.TokenFunc(func(context.Context) (string, error) { return tok, nil }),
+		Retry:      fastRetry(),
+		DeviceID:   o.deviceID,
+		DeviceName: o.deviceName,
 	})
 	if err != nil {
 		t.Fatal(err)

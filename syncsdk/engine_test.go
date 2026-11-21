@@ -585,6 +585,68 @@ func TestPresence(t *testing.T) {
 	}
 }
 
+// 同一账号两台设备: 带设备标识时互相看得到 (拉取与事件流), 本设备看不到自己; 老客户端仍按账号排除。
+func TestPresencePerDevice(t *testing.T) {
+	srv := synctest.New(synctest.Options{})
+	t.Cleanup(srv.Close)
+	registerAll(srv)
+	tok := srv.AddUser("alice")
+	a := newDevice(t, srv, "alice", deviceOpts{plain: true, token: tok, deviceID: "dev-a", deviceName: "办公室 台式机"})
+	b := newDevice(t, srv, "alice", deviceOpts{plain: true, token: tok, deviceID: "dev-b"})
+	legacy := newDevice(t, srv, "alice", deviceOpts{plain: true, token: tok})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		_ = b.engine.Subscribe(ctx, me, syncsdk.SubscribeOptions{PollInterval: time.Hour, ReconnectMin: 10 * time.Millisecond, ReconnectMax: 50 * time.Millisecond})
+	}()
+	time.Sleep(50 * time.Millisecond) // 等事件流连上
+
+	stop := a.engine.Editing(a.ctx(), me, "shipments", "p1")
+	defer stop()
+	// b 不主动拉取, 只靠事件流收到 a 的心跳。
+	waitFor(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return len(b.presence) == 1 && b.presence[0].DeviceID == "dev-a" && b.presence[0].DeviceName == "办公室 台式机" && b.presence[0].UserID == "alice"
+	})
+	a.sync(me)
+	a.mu.Lock()
+	if len(a.presence) != 0 {
+		t.Fatalf("own device echoed back: %+v", a.presence)
+	}
+	a.mu.Unlock()
+	legacy.sync(me)
+	legacy.mu.Lock()
+	if len(legacy.presence) != 0 {
+		t.Fatalf("legacy client sees own account: %+v", legacy.presence)
+	}
+	legacy.mu.Unlock()
+}
+
+func TestDeviceIDHelpers(t *testing.T) {
+	if _, err := syncsdk.NewClient(syncsdk.ClientOptions{BaseURL: "https://x/api/sync/v1", Tokens: syncsdk.TokenFunc(nil), DeviceID: "bad id"}); err == nil {
+		t.Fatal("invalid DeviceID accepted")
+	}
+	p := t.TempDir() + "/sub/device-id"
+	id, err := syncsdk.LoadOrCreateDeviceID(p)
+	if err != nil || !syncsdk.ValidDeviceID(id) {
+		t.Fatalf("create %q %v", id, err)
+	}
+	again, err := syncsdk.LoadOrCreateDeviceID(p)
+	if err != nil || again != id {
+		t.Fatalf("reload %q %v", again, err)
+	}
+	if got := syncsdk.CleanDeviceName(" a" + string(rune(10)) + "b" + string(rune(0)) + "c "); got != "abc" {
+		t.Fatalf("clean %q", got)
+	}
+	if !syncsdk.IsOwnPresence(syncsdk.Presence{UserID: "u", DeviceID: "x"}, "u", "") ||
+		syncsdk.IsOwnPresence(syncsdk.Presence{UserID: "u", DeviceID: "x"}, "u", "y") ||
+		!syncsdk.IsOwnPresence(syncsdk.Presence{UserID: "u", DeviceID: "x"}, "u", "x") {
+		t.Fatal("IsOwnPresence")
+	}
+}
+
 func TestPlaintextMode(t *testing.T) {
 	srv := synctest.New(synctest.Options{})
 	t.Cleanup(srv.Close)

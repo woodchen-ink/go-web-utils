@@ -33,6 +33,8 @@ CZL Connect 数据同步接口 `/api/sync/v1` 的 Go 客户端，桌面端直接
 client, _ := syncsdk.NewClient(syncsdk.ClientOptions{
     BaseURL: "https://connect.czl.net/api/sync/v1",
     Tokens:  tokens, // Token(ctx); 可选实现 InvalidateToken, 收到 401 时刷新后重试一次
+    DeviceID:   deviceID,   // syncsdk.LoadOrCreateDeviceID(数据目录/device-id), presence 按设备区分
+    DeviceName: "办公室台式机", // 可选, 随 presence 下发
 })
 keys, _ := syncsdk.NewKeyManager(client, dpapiStore, syncsdk.KeyManagerOptions{
     Namespace: "tradedocs/" + userID,
@@ -66,7 +68,7 @@ go engine.Subscribe(ctx, space, syncsdk.SubscribeOptions{})    // 持续同步
 - **拒绝**：空间级拒绝（非成员、只读、订阅到期）让整轮返回 `ErrForbidden`，修改留在队列；单条拒绝（集合无权写、超限）交 `OnRejected`，返回 `true` 才出队
 - **附件**：上传前本地算出标识并 `HEAD` 去重；下载解密到临时文件、校验通过再改名进缓存目录
 - **操作记录**：`ActivityLog.Append` 写只追加集合；展示操作人只认 `Change.UpdatedBy` / `UpdatedAt`（服务端按令牌写入），不认内容里的自报身份
-- **presence**：`Editing` 每 20 秒心跳一次，他人编辑状态经 `OnPresence` 下发
+- **presence**：`Editing` 每 20 秒心跳一次，他人编辑状态经 `OnPresence` 下发。`ClientOptions.DeviceID` 设置后按设备区分：同一账号另一台设备的心跳也会下发（`Presence.UserID` 是自己、`DeviceID` 不同），只排除本设备；不设时按账号排除，看不到自己的任何设备。设备标识每台设备生成一次存在本机数据目录（`LoadOrCreateDeviceID`），不要随配置同步
 
 ## 密钥生命周期
 
@@ -135,6 +137,7 @@ code = uint64be(SHA-256("czl-sync-device-sas-v1" || LP(requestId) || LP(tempPub)
 - `PUT /keys/me` 的 `recoveryVersion` 必须等于当前 + 1，已有记录时公钥不可改，否则 409
 - 新设备请求增加 `commitment`、`challenge`（`approverNonce`）、`reveal`（`deviceNonce`）、`approve`（`sealedKey`）、`claim` 各步，每个值只能写一次，重复提交相同值幂等
 - SSE 事件：`event: changed` + `{"seq":N}`，`event: presence` + `{"presence":[...]}`；支持 `Last-Event-ID`
+- 设备标识：请求头 `X-Sync-Device`（1~64 位字母、数字、`-` `_` `.`，不合法按未带处理）与 `X-Sync-Device-Name`（UTF-8 百分号编码）；presence 记录带 `deviceId` / `deviceName`，判定本人心跳见 `IsOwnPresence`
 
 ## 测试
 

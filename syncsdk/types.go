@@ -74,9 +74,13 @@ type Doc struct {
 
 // Presence 是一条「正在编辑」记录。
 type Presence struct {
-	Collection string    `json:"collection"`
-	ID         string    `json:"id"`
-	UserID     string    `json:"userId"`
+	Collection string `json:"collection"`
+	ID         string `json:"id"`
+	UserID     string `json:"userId"`
+	// DeviceID 是发心跳的设备标识 (ClientOptions.DeviceID); 老客户端不带, 为空。
+	DeviceID string `json:"deviceId,omitempty"`
+	// DeviceName 是该设备的显示名, 可能为空。
+	DeviceName string    `json:"deviceName,omitempty"`
 	ExpiresAt  time.Time `json:"expiresAt"`
 }
 
@@ -88,7 +92,7 @@ type ChangesPage struct {
 	Cursor int64 `json:"cursor"`
 	// HasMore 为 true 时应立即继续拉取。
 	HasMore bool `json:"hasMore"`
-	// Presence 是他人正在编辑的文档 (不含本人)。
+	// Presence 是他人与本人其他设备正在编辑的文档 (不含本设备; 不带设备标识时不含本人)。
 	Presence []Presence `json:"presence"`
 }
 

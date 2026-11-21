@@ -83,6 +83,12 @@ type ClientOptions struct {
 	Retry RetryPolicy
 	// UserAgent 默认 "go-web-utils-syncsdk"。
 	UserAgent string
+	// DeviceID 是本机稳定的设备标识 (1~64 位字母、数字、'-'、'_'、'.'), 每台设备生成一次并持久化
+	// (见 LoadOrCreateDeviceID), 不要随配置同步到其他设备。设置后每个请求带 X-Sync-Device 头,
+	// 「正在编辑」按设备区分: 同一账号另一台设备上的心跳也会下发。留空时按账号区分 (看不到自己的任何设备)。
+	DeviceID string
+	// DeviceName 是设备显示名 (如 "办公室台式机"), 随 presence 下发给空间成员; 可留空, 超过 64 字符截断。
+	DeviceName string
 }
 
 // Client 是 /api/sync/v1 的类型化 HTTP 客户端: 鉴权、错误归类、重试退避与上下文取消。
@@ -93,6 +99,8 @@ type Client struct {
 	hc     *http.Client
 	retry  RetryPolicy
 	ua     string
+	device string
+	name   string // 已百分号编码
 }
 
 // NewClient 创建 Client。
@@ -108,11 +116,19 @@ func NewClient(opts ClientOptions) (*Client, error) {
 	if hc == nil {
 		hc = &http.Client{}
 	}
+	if opts.DeviceID != "" && !ValidDeviceID(opts.DeviceID) {
+		return nil, fmt.Errorf("syncsdk: invalid DeviceID %q", opts.DeviceID)
+	}
+	var name string
+	if opts.DeviceID != "" {
+		name = url.PathEscape(CleanDeviceName(opts.DeviceName))
+	}
 	ua := opts.UserAgent
 	if ua == "" {
 		ua = "go-web-utils-syncsdk"
 	}
-	return &Client{base: u, tokens: opts.Tokens, hc: hc, retry: opts.Retry.withDefaults(), ua: ua}, nil
+	return &Client{base: u, tokens: opts.Tokens, hc: hc, retry: opts.Retry.withDefaults(), ua: ua,
+		device: opts.DeviceID, name: name}, nil
 }
 
 // request 描述一次调用。body 为可重放的字节, 或由 open 在每次尝试时重新打开 (大附件)。
@@ -211,6 +227,12 @@ func (c *Client) once(ctx context.Context, r *request) (*http.Response, error) {
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("User-Agent", c.ua)
 	req.Header.Set("Accept", "application/json")
+	if c.device != "" {
+		req.Header.Set(HeaderDevice, c.device)
+		if c.name != "" {
+			req.Header.Set(HeaderDeviceName, c.name)
+		}
+	}
 	if r.json {
 		req.Header.Set("Content-Type", "application/json")
 	} else if r.ctype != "" {
